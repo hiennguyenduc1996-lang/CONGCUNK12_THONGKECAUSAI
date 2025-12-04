@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -56,6 +56,11 @@ interface ThresholdConfig {
   highPercent: number; // e.g., > 40% students wrong
 }
 
+interface ColorConfig {
+  lowError: string; // Default Yellow
+  highError: string; // Default Red
+}
+
 // --- Constants ---
 
 const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
@@ -94,7 +99,11 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
   }
 };
 
-const TABLE_COLORS = ['#dbeafe', '#fef9c3', '#fee2e2']; // Blue, Yellow, Red
+const DEFAULT_COLORS = {
+    blue: '#dbeafe', 
+    yellow: '#fef9c3', 
+    red: '#fee2e2'
+};
 
 // --- Helper Functions ---
 
@@ -150,41 +159,34 @@ const getPart2Label = (index: number, subjectType: string): string => {
   return `${groupNum}${String.fromCharCode(charCode)}`;
 };
 
-const exportToWord = (elementId: string, fileName: string) => {
-    const element = document.getElementById(elementId);
-    if (!element) return;
+const exportToExcel = (elementId: string, fileName: string) => {
+    const table = document.getElementById(elementId);
+    if (!table || typeof XLSX === 'undefined') return;
 
+    // Create a new workbook
+    const wb = XLSX.utils.table_to_book(table, { sheet: "ThongKe" });
+    
+    // Write the workbook to a file
+    XLSX.writeFile(wb, `${fileName || 'Thong_ke'}.xlsx`);
+};
+
+const exportExamToWord = (content: string, fileName: string) => {
     const htmlContent = `
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head>
             <meta charset="utf-8">
-            <title>Export HTML to Word Document with Landscape Orientation</title>
+            <title>De_On_Tap</title>
             <style>
-                @page {
-                    size: 29.7cm 21cm;
-                    margin: 1cm 1cm 1cm 1cm;
-                    mso-page-orientation: landscape;
-                }
                 body {
                     font-family: 'Times New Roman', serif;
+                    font-size: 12pt;
+                    line-height: 1.5;
                 }
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                }
-                td, th {
-                    border: 1px solid black;
-                    padding: 5px;
-                    text-align: center;
-                    font-size: 10pt;
-                }
-                .bg-yellow { background-color: #fefce8; }
-                .bg-red { background-color: #fecaca; }
-                .text-red { color: red; font-weight: bold; }
+                p { margin-bottom: 10px; }
             </style>
         </head>
         <body>
-            ${element.outerHTML}
+            ${content.replace(/\n/g, '<br>')}
         </body>
         </html>
     `;
@@ -197,7 +199,7 @@ const exportToWord = (elementId: string, fileName: string) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName || 'Thong_ke'}.doc`;
+    link.download = `${fileName || 'De_On_Tap'}.doc`; // Save as .doc for HTML content compatibility
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -373,6 +375,11 @@ const App = () => {
     return saved ? JSON.parse(saved) : { lowCount: 5, highPercent: 40 };
   });
 
+  const [customColors, setCustomColors] = useState<ColorConfig>(() => {
+    const saved = localStorage.getItem('customColors');
+    return saved ? JSON.parse(saved) : { lowError: DEFAULT_COLORS.yellow, highError: DEFAULT_COLORS.red };
+  });
+
   // Exam Creation State
   const [examFile, setExamFile] = useState<DocFile | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -390,6 +397,10 @@ const App = () => {
   useEffect(() => {
     localStorage.setItem('thresholds', JSON.stringify(thresholds));
   }, [thresholds]);
+
+  useEffect(() => {
+    localStorage.setItem('customColors', JSON.stringify(customColors));
+  }, [customColors]);
 
   // Handle File Upload (Excel/CSV)
   const handleDataUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -534,7 +545,8 @@ const App = () => {
     setIsGenerating(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: userApiKey || process.env.API_KEY || '' });
+      const apiKey = userApiKey || process.env.API_KEY || '';
+      const ai = new GoogleGenAI({ apiKey: apiKey });
       
       // Use filtered stats
       const topWrong = filteredWrongStats.slice(0, 5); // Take top 5 of filtered
@@ -547,6 +559,15 @@ const App = () => {
         1. Phân tích nội dung kiến thức của các câu hỏi bị sai nhiều (Câu số: ${wrongIndices}).
         2. Tạo ra một đề ôn tập ngắn (khoảng 5-10 câu) tập trung vào các dạng bài/kiến thức đó để giúp học sinh khắc phục lỗi sai.
         3. Đề ôn tập cần có đáp án và lời giải chi tiết ở cuối.
+        
+        YÊU CẦU ĐỊNH DẠNG LATEX (TUYỆT ĐỐI TUÂN THỦ):
+        1. Tất cả công thức toán học, vật lý, hóa học phải đặt trong cặp dấu $...$.
+        2. Ký hiệu Hy Lạp: ρ -> \\rho, θ -> \\theta, α -> \\alpha, β -> \\beta, Δ -> \\Delta, μ -> \\mu, λ -> \\lambda.
+        3. Độ C: ◦C -> ^\\circ C. Ví dụ: 300◦C -> $300^\\circ C$, -23◦C -> $-23^\\circ C$.
+        4. Phần trăm: % -> \\%.
+        5. Đơn vị đo lường: Thêm khoảng cách \\; trước đơn vị.
+           - Ví dụ: 50 cm -> $50\\;cm$
+           - Ví dụ: 100g -> $100\\;g$
         
         Nội dung đề gốc:
         ${examFile.type === 'text' ? examFile.content : '(Xem PDF đính kèm)'}
@@ -574,9 +595,9 @@ const App = () => {
 
   // Render Stats Cell Color
   const getCellColor = (wrongCount: number, wrongPercent: number) => {
-    if (wrongCount === 0) return TABLE_COLORS[0]; // Blue
-    if (wrongPercent > thresholds.highPercent) return TABLE_COLORS[2]; // Red
-    if (wrongCount < thresholds.lowCount) return TABLE_COLORS[1]; // Yellow
+    if (wrongCount === 0) return DEFAULT_COLORS.blue; // Blue (Correct)
+    if (wrongPercent > thresholds.highPercent) return customColors.highError; // Configurable Red
+    if (wrongCount < thresholds.lowCount) return customColors.lowError; // Configurable Yellow
     return 'white';
   };
 
@@ -627,11 +648,14 @@ const App = () => {
 
                  {/* Threshold Configuration */}
                  <div style={{ marginBottom: '30px' }}>
-                    <h4 style={{ margin: '0 0 15px 0', color: '#334155' }}>Cấu hình hiển thị thống kê</h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <h4 style={{ margin: '0 0 15px 0', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                         <Filter size={16} /> Cấu hình hiển thị thống kê
+                    </h4>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
                        <div>
                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                             Số lượng sai ít (Tô vàng)
+                             Ngưỡng sai ít (Số lượng)
                           </label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                              <span style={{ fontSize: '13px', color: '#64748b' }}>&lt;</span>
@@ -646,7 +670,7 @@ const App = () => {
                        </div>
                        <div>
                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                             Tỷ lệ sai nhiều (Tô đỏ)
+                             Ngưỡng sai nhiều (Tỷ lệ %)
                           </label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                              <span style={{ fontSize: '13px', color: '#64748b' }}>&gt;</span>
@@ -659,6 +683,41 @@ const App = () => {
                              <span style={{ fontSize: '13px', color: '#64748b' }}>%</span>
                           </div>
                        </div>
+                    </div>
+
+                    <h4 style={{ margin: '0 0 15px 0', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                         <Palette size={16} /> Màu sắc hiển thị
+                    </h4>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                        <div>
+                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+                              Màu báo sai ít (Mặc định: Vàng)
+                           </label>
+                           <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
+                               <input 
+                                  type="color" 
+                                  value={customColors.lowError}
+                                  onChange={(e) => setCustomColors({...customColors, lowError: e.target.value})}
+                                  style={{ height: '36px', width: '60px', padding: '0', border: 'none', cursor: 'pointer', borderRadius: '4px' }}
+                               />
+                               <span style={{fontSize:'12px', color:'#64748b', fontFamily:'monospace'}}>{customColors.lowError}</span>
+                           </div>
+                        </div>
+                        <div>
+                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+                              Màu báo sai nhiều (Mặc định: Đỏ)
+                           </label>
+                           <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
+                               <input 
+                                  type="color" 
+                                  value={customColors.highError}
+                                  onChange={(e) => setCustomColors({...customColors, highError: e.target.value})}
+                                  style={{ height: '36px', width: '60px', padding: '0', border: 'none', cursor: 'pointer', borderRadius: '4px' }}
+                               />
+                               <span style={{fontSize:'12px', color:'#64748b', fontFamily:'monospace'}}>{customColors.highError}</span>
+                           </div>
+                        </div>
                     </div>
                  </div>
 
@@ -800,26 +859,27 @@ const App = () => {
                   <div style={{ display: 'flex', gap: '10px' }}>
                      {stats && (
                         <button
-                           onClick={() => exportToWord('stats-table', fileName)}
+                           onClick={() => exportToExcel('stats-table', fileName)}
                            style={{
-                              padding: '8px 16px', background: '#2563eb', border: 'none', borderRadius: '8px',
-                              cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'white',
+                              padding: '10px 20px', borderRadius: '99px', background: '#2563eb', border: 'none',
+                              cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
                               display: 'flex', alignItems: 'center', gap: '8px',
                               boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
                            }}
                         >
-                           <FileDown size={14} /> Tải file Word
+                           <FileDown size={16} /> Tải file Excel
                         </button>
                      )}
                      <button
                         onClick={() => document.getElementById('re-upload')?.click()}
                         style={{
-                           padding: '8px 16px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '8px',
-                           cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#475569',
-                           display: 'flex', alignItems: 'center', gap: '8px'
+                           padding: '10px 20px', borderRadius: '99px', background: 'white', border: '1px solid #cbd5e1',
+                           cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569',
+                           display: 'flex', alignItems: 'center', gap: '8px',
+                           boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                         }}
                      >
-                        <RefreshCw size={14} /> Tải file khác
+                        <RefreshCw size={16} /> Tải file khác
                      </button>
                      <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="re-upload" />
                   </div>
@@ -863,11 +923,29 @@ const App = () => {
                                 {/* Top Summary Bar */}
                                 <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' }}>
                                     <div style={{ display: 'flex', gap: '24px', fontSize: '13px', fontWeight: 500, alignItems: 'center' }}>
-                                        {/* Legend */}
+                                        {/* Legend with Custom Styles */}
                                         <div style={{ display: 'flex', gap: '15px', borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
-                                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}><span style={{width:'10px', height:'10px', background: TABLE_COLORS[0], borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 0 Sai</div>
-                                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}><span style={{width:'10px', height:'10px', background: TABLE_COLORS[1], borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> &lt;{thresholds.lowCount} Sai</div>
-                                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}><span style={{width:'10px', height:'10px', background: TABLE_COLORS[2], borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> &gt;{thresholds.highPercent}% Sai</div>
+                                            <div style={{ 
+                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                            }}>
+                                                <span style={{width:'12px', height:'12px', background: DEFAULT_COLORS.blue, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                0 Sai
+                                            </div>
+                                            <div style={{ 
+                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                            }}>
+                                                <span style={{width:'12px', height:'12px', background: customColors.lowError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                &lt;{thresholds.lowCount} Sai
+                                            </div>
+                                            <div style={{ 
+                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                            }}>
+                                                <span style={{width:'12px', height:'12px', background: customColors.highError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                &gt;{thresholds.highPercent}% Sai
+                                            </div>
                                         </div>
                                         {/* Stats */}
                                         <div style={{ display: 'flex', gap: '15px', color: '#334155' }}>
@@ -954,7 +1032,19 @@ const App = () => {
                                                 <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
                                                     <td style={{ position: 'sticky', left: 0, background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9' }}>{idx + 1}</td>
                                                     <td style={{ position: 'sticky', left: '40px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', fontFamily: 'monospace' }}>{st.sbd}</td>
-                                                    <td style={{ position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', textAlign: 'left', fontWeight: 600, paddingLeft: '10px' }}>{st.name}</td>
+                                                    <td style={{ 
+                                                        position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', 
+                                                        borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', 
+                                                        textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle'
+                                                    }}>
+                                                        {/* Restrict to 2 lines max */}
+                                                        <div style={{ 
+                                                            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', 
+                                                            overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '1.4', maxHeight: '2.8em' 
+                                                        }}>
+                                                            {st.name}
+                                                        </div>
+                                                    </td>
                                                     <td style={{ borderBottom: '1px solid #f1f5f9' }}>{st.code}</td>
                                                     <td style={{ borderBottom: '1px solid #f1f5f9', fontWeight: 'bold', color: getScoreColor(st.scores.total) }}>{st.scores.total}</td>
                                                     <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p1}</td>
@@ -963,16 +1053,23 @@ const App = () => {
                                                     {stats.map(s => {
                                                         const isCorrect = st.details[s.index] === 'T';
                                                         const isPart2 = s.index >= p2Range.start && s.index <= p2Range.end;
-                                                        const wrongBg = '#fecaca'; // Red 200 - Darker Red for cells
-                                                        const part2CorrectBg = '#fefce8'; // Light Yellow
-
-                                                        // Add explicit class for Word Export to recognize styles
-                                                        const cellClass = isCorrect ? (isPart2 ? 'bg-yellow' : '') : 'bg-red text-red';
+                                                        
+                                                        // Determine background color based on status and settings
+                                                        let bgColor = 'transparent';
+                                                        if (isCorrect) {
+                                                            bgColor = isPart2 ? DEFAULT_COLORS.yellow : 'transparent';
+                                                        } else {
+                                                            // For cells, use a slightly lighter version of user color or default red
+                                                            // Simple logic: if user chose a color, try to match intent or fallback to simple red tint
+                                                            // Since we can't easily darken arbitrary hex without library, stick to a light red for cells
+                                                            // or use the user's high error color directly if they want
+                                                            bgColor = '#fecaca'; 
+                                                        }
 
                                                         return (
-                                                            <td key={s.index} className={cellClass} style={{ 
+                                                            <td key={s.index} style={{ 
                                                                 borderBottom: '1px solid #f1f5f9', 
-                                                                background: isCorrect ? (isPart2 ? part2CorrectBg : 'transparent') : wrongBg,
+                                                                background: bgColor,
                                                                 color: isCorrect ? '#cbd5e1' : '#b91c1c',
                                                                 fontSize: '11px', fontWeight: isCorrect ? 400 : 700,
                                                                 padding: '2px',
@@ -1025,14 +1122,16 @@ const App = () => {
                                             <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
                                                 Thống kê lỗi sai (&gt;{thresholds.highPercent}%):
                                             </div>
-                                            {/* Filter Dropdown */}
+                                            {/* Styled Filter Dropdown */}
                                             <div style={{ position: 'relative' }}>
                                                 <select 
                                                     value={statsPartFilter} 
                                                     onChange={(e) => setStatsPartFilter(e.target.value as any)}
                                                     style={{ 
-                                                        padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', 
-                                                        fontSize: '11px', color: '#334155', cursor: 'pointer', outline: 'none' 
+                                                        padding: '6px 12px', borderRadius: '8px', 
+                                                        border: '2px solid #3b82f6', background: 'white',
+                                                        fontSize: '12px', color: '#1e3a8a', fontWeight: 600,
+                                                        cursor: 'pointer', outline: 'none' 
                                                     }}
                                                 >
                                                     <option value="all">Tất cả</option>
@@ -1082,8 +1181,11 @@ const App = () => {
                                 <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>Nội dung đề tạo bởi AI</div>
                                     {generatedExam && (
-                                        <button style={{ padding: '6px 12px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <Download size={14} /> Sao chép / Tải về
+                                        <button 
+                                            onClick={() => exportExamToWord(generatedExam, 'De_On_Tap')}
+                                            style={{ padding: '6px 12px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        >
+                                            <FileDown size={14} /> Tải file Word
                                         </button>
                                     )}
                                 </div>
