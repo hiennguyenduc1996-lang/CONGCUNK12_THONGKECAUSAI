@@ -366,6 +366,9 @@ const App = () => {
   // Stats Filter
   const [statsPartFilter, setStatsPartFilter] = useState<'all' | 'p1' | 'p2' | 'p3'>('all');
 
+  // Question Generation Counts
+  const [questionCounts, setQuestionCounts] = useState<Record<number, number>>({});
+
   // Sorting State
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
@@ -433,6 +436,7 @@ const App = () => {
       const { results, stats: newStats } = processData(data, activeSubject);
       setProcessedResults(results);
       setStats(newStats);
+      setQuestionCounts({}); // Reset counts when subject changes
     }
   }, [activeSubject]);
 
@@ -520,6 +524,10 @@ const App = () => {
       }).sort((a,b) => b.wrongCount - a.wrongCount);
   }, [stats, statsPartFilter, thresholds.highPercent, activeSubject]);
 
+  const updateQuestionCount = (index: number, val: number) => {
+      setQuestionCounts(prev => ({ ...prev, [index]: val }));
+  };
+
   // Handle Exam File Upload
   const handleExamFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -548,16 +556,23 @@ const App = () => {
       const apiKey = userApiKey || process.env.API_KEY || '';
       const ai = new GoogleGenAI({ apiKey: apiKey });
       
-      // Use filtered stats
-      const topWrong = filteredWrongStats.slice(0, 5); // Take top 5 of filtered
-      const wrongIndices = topWrong.map(s => getPart2Label(s.index, activeSubject)).join(", ");
+      // Construct specific request about question counts
+      const requestDetails = filteredWrongStats.map(s => {
+          const label = getPart2Label(s.index, activeSubject);
+          const count = questionCounts[s.index] || 5; // Default to 5
+          return `- Dạng bài câu ${label}: tạo ${count} câu.`;
+      }).join('\n');
       
       const prompt = `
-        Bạn là một giáo viên chuyên nghiệp. Dưới đây là nội dung của một đề thi gốc và thống kê các câu hỏi mà học sinh làm sai nhiều nhất (Lọc theo tiêu chí: ${statsPartFilter === 'all' ? 'Tất cả' : statsPartFilter.toUpperCase()}, Tỷ lệ sai > ${thresholds.highPercent}%).
+        Bạn là một giáo viên chuyên nghiệp. Dưới đây là nội dung của một đề thi gốc và yêu cầu tạo đề ôn tập dựa trên các câu học sinh làm sai nhiều nhất.
         
         Nhiệm vụ:
-        1. Phân tích nội dung kiến thức của các câu hỏi bị sai nhiều (Câu số: ${wrongIndices}).
-        2. Tạo ra một đề ôn tập ngắn (khoảng 5-10 câu) tập trung vào các dạng bài/kiến thức đó để giúp học sinh khắc phục lỗi sai.
+        1. Phân tích nội dung kiến thức của các câu hỏi trong đề gốc được liệt kê dưới đây.
+        2. Tạo ra bộ câu hỏi ôn tập tương ứng với số lượng yêu cầu cho từng câu.
+        
+        CHI TIẾT YÊU CẦU SỐ LƯỢNG CÂU HỎI:
+        ${requestDetails}
+
         3. Đề ôn tập cần có đáp án và lời giải chi tiết ở cuối.
         
         YÊU CẦU ĐỊNH DẠNG LATEX (TUYỆT ĐỐI TUÂN THỦ):
@@ -783,7 +798,7 @@ const App = () => {
                   <FileSpreadsheet size={20} />
               </div>
               <div>
-                  <div style={{ lineHeight: '1.2' }}>Converter</div>
+                  <div style={{ lineHeight: '1.2' }}>THỐNG KÊ CÂU SAI</div>
                   <div style={{ fontSize: '16px', color: '#93c5fd', fontWeight: 500 }}>NK12</div>
               </div>
           </div>
@@ -969,7 +984,7 @@ const App = () => {
                                                 <th onClick={() => handleSort('sbd')} style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
                                                    <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>SBD {renderSortIcon('sbd')}</div>
                                                 </th>
-                                                <th onClick={() => handleSort('name')} style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', cursor: 'pointer', userSelect: 'none' }}>
+                                                <th onClick={() => handleSort('name')} style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', cursor: 'pointer', userSelect: 'none', minWidth: '220px' }}>
                                                    <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderSortIcon('name')}</div>
                                                 </th>
                                                 <th style={{ borderBottom: '1px solid #cbd5e1' }}>Mã</th>
@@ -993,7 +1008,7 @@ const App = () => {
                                             <tr style={{ background: '#e2e8f0' }}>
                                                 <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
                                                 <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', color: '#475569', fontSize: '11px' }}>Đáp án đúng</th>
+                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', color: '#475569', fontSize: '11px', minWidth: '220px' }}>Đáp án đúng</th>
                                                 <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
                                                 <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
                                                 <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
@@ -1013,7 +1028,7 @@ const App = () => {
                                             <tr style={{ background: '#f8fafc' }}>
                                                 <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
                                                 <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8', textAlign: 'left', paddingLeft: '10px', color: '#64748b', fontSize: '11px' }}>Thống kê (Số lượng/%)</th>
+                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8', textAlign: 'left', paddingLeft: '10px', color: '#64748b', fontSize: '11px', minWidth: '220px' }}>Thống kê (Số lượng/%)</th>
                                                 <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
                                                 <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
                                                 <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
@@ -1035,7 +1050,7 @@ const App = () => {
                                                     <td style={{ 
                                                         position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', 
                                                         borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', 
-                                                        textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle'
+                                                        textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle', minWidth: '220px'
                                                     }}>
                                                         {/* Restrict to 2 lines max */}
                                                         <div style={{ 
@@ -1090,67 +1105,94 @@ const App = () => {
                 )}
 
                 {activeTab === 'create' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto', height: '100%' }}>
                         {/* Control Panel */}
-                        <div>
-                            <div style={{ background: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
-                                <h3 style={{ margin: '0 0 20px 0', fontSize: '16px', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <BookOpen size={18} /> Nguồn đề thi
+                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                            <div style={{ background: 'white', padding: '20px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                                <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                    <BookOpen size={18} /> Cấu hình tạo đề
                                 </h3>
                                 
+                                {/* File Upload */}
                                 <div style={{ 
-                                    padding: '30px 20px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', 
-                                    textAlign: 'center', marginBottom: '20px', cursor: 'pointer', transition: 'all 0.2s'
+                                    padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', 
+                                    textAlign: 'center', marginBottom: '15px', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0
                                 }}
                                 onClick={() => document.getElementById('exam-upload')?.click()}
                                 onMouseOver={(e) => e.currentTarget.style.borderColor = '#93c5fd'}
                                 onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
                                 >
                                     <input type="file" accept=".pdf,.docx,.doc" onChange={handleExamFileUpload} style={{ display: 'none' }} id="exam-upload" />
-                                    <div style={{ width: '40px', height: '40px', background: 'white', borderRadius: '50%', margin: '0 auto 10px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                        <Upload size={20} color="#64748b" />
+                                    <div style={{ width: '36px', height: '36px', background: 'white', borderRadius: '50%', margin: '0 auto 8px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                        <Upload size={18} color="#64748b" />
                                     </div>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#334155' }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>
                                         {examFile ? examFile.name : "Chọn file đề gốc"}
                                     </div>
                                     <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Hỗ trợ PDF, DOCX</div>
                                 </div>
 
                                 {stats && (
-                                    <div style={{ marginBottom: '20px' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, marginBottom: '15px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexShrink: 0 }}>
                                             <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                                                Thống kê lỗi sai (&gt;{thresholds.highPercent}%):
+                                                Các câu sai nhiều (&gt;{thresholds.highPercent}%):
                                             </div>
                                             {/* Styled Filter Dropdown */}
-                                            <div style={{ position: 'relative' }}>
-                                                <select 
-                                                    value={statsPartFilter} 
-                                                    onChange={(e) => setStatsPartFilter(e.target.value as any)}
-                                                    style={{ 
-                                                        padding: '6px 12px', borderRadius: '8px', 
-                                                        border: '2px solid #3b82f6', background: 'white',
-                                                        fontSize: '12px', color: '#1e3a8a', fontWeight: 600,
-                                                        cursor: 'pointer', outline: 'none' 
-                                                    }}
-                                                >
-                                                    <option value="all">Tất cả</option>
-                                                    <option value="p1">Phần 1</option>
-                                                    <option value="p2">Phần 2</option>
-                                                    <option value="p3">Phần 3</option>
-                                                </select>
-                                            </div>
+                                            <select 
+                                                value={statsPartFilter} 
+                                                onChange={(e) => setStatsPartFilter(e.target.value as any)}
+                                                style={{ 
+                                                    padding: '4px 8px', borderRadius: '6px', 
+                                                    border: '1px solid #cbd5e1', background: 'white',
+                                                    fontSize: '11px', color: '#1e3a8a', fontWeight: 600,
+                                                    cursor: 'pointer', outline: 'none' 
+                                                }}
+                                            >
+                                                <option value="all">Tất cả</option>
+                                                <option value="p1">Phần 1</option>
+                                                <option value="p2">Phần 2</option>
+                                                <option value="p3">Phần 3</option>
+                                            </select>
                                         </div>
                                         
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                        <div style={{ overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
                                             {filteredWrongStats.length > 0 ? (
-                                                filteredWrongStats.map(s => (
-                                                    <div key={s.index} style={{ fontSize: '12px', padding: '4px 8px', background: '#fee2e2', color: '#b91c1c', borderRadius: '6px', fontWeight: 600 }}>
-                                                        Câu {getPart2Label(s.index, activeSubject)} ({s.wrongPercent}%)
-                                                    </div>
-                                                ))
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                    {filteredWrongStats.map(s => (
+                                                        <div key={s.index} style={{ 
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
+                                                            padding: '8px 10px', background: '#fff1f2', border: '1px solid #fecaca', borderRadius: '8px' 
+                                                        }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>
+                                                                    Câu {getPart2Label(s.index, activeSubject)}
+                                                                </span>
+                                                                <span style={{ fontSize: '11px', color: '#881337' }}>
+                                                                    Sai: {s.wrongPercent}% ({s.wrongCount} HS)
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                <span style={{ fontSize: '11px', color: '#475569' }}>Số câu:</span>
+                                                                <input 
+                                                                    type="number" 
+                                                                    min="1" 
+                                                                    max="50"
+                                                                    value={questionCounts[s.index] || 5} 
+                                                                    onChange={(e) => updateQuestionCount(s.index, parseInt(e.target.value) || 0)}
+                                                                    style={{ 
+                                                                        width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1', 
+                                                                        textAlign: 'center', fontSize: '13px', fontWeight: 600
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             ) : (
-                                                <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>Không có câu nào thỏa mãn điều kiện lọc.</div>
+                                                <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic', padding: '10px', textAlign: 'center' }}>
+                                                    Không có câu nào thỏa mãn điều kiện lọc.
+                                                </div>
                                             )}
                                         </div>
                                     </div>
@@ -1164,7 +1206,7 @@ const App = () => {
                                         color: 'white', border: 'none', borderRadius: '10px', cursor: (!examFile || !stats) ? 'not-allowed' : 'pointer',
                                         fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
                                         boxShadow: (!examFile || !stats) ? 'none' : '0 4px 6px -1px rgba(30, 58, 138, 0.3)',
-                                        transition: 'transform 0.1s'
+                                        transition: 'transform 0.1s', flexShrink: 0
                                     }}
                                     onMouseDown={(e) => !isGenerating && (e.currentTarget.style.transform = 'scale(0.98)')}
                                     onMouseUp={(e) => !isGenerating && (e.currentTarget.style.transform = 'scale(1)')}
