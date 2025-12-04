@@ -1,0 +1,5 @@
+{
+  "name": "Thống kê câu sai, phân tích và tạo đề",
+  "description": "Ứng dụng hỗ trợ chấm thi trắc nghiệm: Tải dữ liệu điểm ZipGrade, thống kê câu sai theo ma trận, và sử dụng AI để tạo đề ôn tập dựa trên các câu học sinh hay sai.",
+  "requestFramePermissions": []
+}
