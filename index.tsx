@@ -318,11 +318,20 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
     p3Score = Math.round(p3Score * 100) / 100;
     const totalScore = Math.round((p1Score + p2Score + p3Score) * 100) / 100;
 
+    // Handle Name Order (Swapped based on user request "FirstName + LastName")
+    // If input is "Anh" (First) "Đặng Thùy" (Last), we want "Đặng Thùy Anh" (Last First)
+    // Wait, the user said they see "Anh Đặng Thùy" and want "Đặng Thùy Anh".
+    // If code was Last+First, and result was "Anh Đặng Thùy", then Last="Anh", First="Đặng Thùy".
+    // To get "Đặng Thùy Anh", we need First+Last.
+    const fName = String(row['FirstName'] || '').trim();
+    const lName = String(row['LastName'] || '').trim();
+    const fullName = `${fName} ${lName}`.trim(); 
+
     results.push({
       sbd: String(row['StudentID'] || ''),
-      firstName: String(row['FirstName'] || ''),
-      lastName: String(row['LastName'] || ''),
-      name: `${row['LastName'] || ''} ${row['FirstName'] || ''}`.trim(),
+      firstName: fName,
+      lastName: lName,
+      name: fullName,
       code: String(row['Key Version'] || row['Exam Code'] || '---'),
       rawAnswers,
       scores: {
@@ -412,21 +421,45 @@ const App = () => {
 
     setFileName(file.name);
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target?.result;
+
+    const processBinary = (bstr: string | ArrayBuffer) => {
       const wb = XLSX.read(bstr, { type: 'binary' });
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const jsonData = XLSX.utils.sheet_to_json(ws);
       setData(jsonData);
       
-      // Auto process
       const { results, stats } = processData(jsonData, activeSubject);
       setProcessedResults(results);
       setStats(stats);
-      setSortConfig(null); // Reset sort on new file
+      setSortConfig(null);
     };
-    reader.readAsBinaryString(file);
+
+    if (file.name.toLowerCase().endsWith('.csv')) {
+        // Read as Text with UTF-8 to fix font issues in CSV
+        reader.onload = (evt) => {
+            const text = evt.target?.result as string;
+            const wb = XLSX.read(text, { type: 'string' });
+            const wsname = wb.SheetNames[0];
+            const ws = wb.Sheets[wsname];
+            const jsonData = XLSX.utils.sheet_to_json(ws);
+            setData(jsonData);
+            
+            const { results, stats } = processData(jsonData, activeSubject);
+            setProcessedResults(results);
+            setStats(stats);
+            setSortConfig(null);
+        }
+        reader.readAsText(file, 'UTF-8');
+    } else {
+        // Excel files
+        reader.onload = (evt) => {
+            const bstr = evt.target?.result;
+            if (bstr) processBinary(bstr);
+        };
+        reader.readAsBinaryString(file);
+    }
+    
     e.target.value = ''; // Reset
   };
 
@@ -461,7 +494,7 @@ const App = () => {
 
       // Determine values based on key
       if (sortConfig.key === 'name') {
-        aVal = a.firstName;
+        aVal = a.firstName; // Sort by FirstName mostly for VN names
         bVal = b.firstName;
       } else if (sortConfig.key === 'sbd') {
         aVal = a.sbd;
@@ -567,13 +600,23 @@ const App = () => {
         Bạn là một giáo viên chuyên nghiệp. Dưới đây là nội dung của một đề thi gốc và yêu cầu tạo đề ôn tập dựa trên các câu học sinh làm sai nhiều nhất.
         
         Nhiệm vụ:
-        1. Phân tích nội dung kiến thức của các câu hỏi trong đề gốc được liệt kê dưới đây.
-        2. Tạo ra bộ câu hỏi ôn tập tương ứng với số lượng yêu cầu cho từng câu.
-        
-        CHI TIẾT YÊU CẦU SỐ LƯỢNG CÂU HỎI:
-        ${requestDetails}
+        Phân tích nội dung kiến thức của các câu hỏi trong đề gốc được liệt kê bên dưới, sau đó tạo nội dung theo cấu trúc sau:
 
-        3. Đề ôn tập cần có đáp án và lời giải chi tiết ở cuối.
+        CẤU TRÚC TRẢ VỀ (Bắt buộc):
+        
+        1. **Đề gốc**:
+           - Trích xuất nội dung các câu hỏi gốc bị sai nhiều từ file đề (Các câu tương ứng với danh sách yêu cầu bên dưới).
+        
+        2. **Đáp án đề gốc**:
+           - Chỉ ghi đáp án trắc nghiệm của các câu gốc đó (Ví dụ: 1.A, 2.C, 3.D...). Không ghi lời giải.
+        
+        3. **Đề ôn tập**:
+           - Tạo các câu hỏi rèn luyện tương tự (đổi số liệu, giữ nguyên dạng bài) cho từng câu sai.
+           - Số lượng câu hỏi cho từng dạng bài tuân thủ theo danh sách:
+           ${requestDetails}
+        
+        4. **Đáp án đề ôn tập**:
+           - Chỉ ghi đáp án trắc nghiệm của các câu hỏi rèn luyện này (Ví dụ: 1.A, 2.B...). Tuyệt đối không đưa ra lời giải chi tiết.
         
         YÊU CẦU ĐỊNH DẠNG LATEX (TUYỆT ĐỐI TUÂN THỦ):
         1. Tất cả công thức toán học, vật lý, hóa học phải đặt trong cặp dấu $...$.
