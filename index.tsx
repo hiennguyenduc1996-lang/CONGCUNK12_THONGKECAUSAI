@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, Trophy, ClipboardList, Users, TrendingUp } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -59,6 +59,21 @@ interface ThresholdConfig {
 interface ColorConfig {
   lowError: string; // Default Yellow
   highError: string; // Default Red
+}
+
+// --- Ranking Types ---
+interface RankingStudent {
+    sbd: string;
+    lastName: string;
+    firstName: string;
+    className: string;
+    scores: {
+        math: number | null;
+        phys: number | null;
+        chem: number | null;
+        eng: number | null;
+        bio: number | null;
+    }
 }
 
 // --- Constants ---
@@ -396,13 +411,20 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
 
 const App = () => {
   const [activeSubject, setActiveSubject] = useState<'math' | 'science' | 'english' | 'it' | 'history'>('math');
-  const [activeTab, setActiveTab] = useState<'stats' | 'create'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'create' | 'ranking'>('stats');
   
   // Data State
   const [data, setData] = useState<any[] | null>(null);
   const [processedResults, setProcessedResults] = useState<StudentResult[] | null>(null);
   const [stats, setStats] = useState<QuestionStat[] | null>(null);
   const [fileName, setFileName] = useState<string>("");
+
+  // Ranking Tab State
+  const [rankingTab, setRankingTab] = useState<'students' | 'scores' | 'summary'>('students');
+  const [rankingData, setRankingData] = useState<RankingStudent[]>([]);
+  const [rankingFilter, setRankingFilter] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'All'>('All');
+  const [rankingSort, setRankingSort] = useState<{key: string, direction: 'asc'|'desc'}>({key: 'score', direction: 'desc'});
+  const [scoreInput, setScoreInput] = useState("");
 
   // Stats Filter
   const [statsPartFilter, setStatsPartFilter] = useState<'all' | 'p1' | 'p2' | 'p3'>('all');
@@ -494,6 +516,168 @@ const App = () => {
     
     e.target.value = ''; // Reset
   };
+
+  // Ranking Logic
+  const handleRankingStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          const bstr = evt.target?.result;
+          if (bstr) {
+              const wb = XLSX.read(bstr, { type: 'binary' });
+              const ws = wb.Sheets[wb.SheetNames[0]];
+              // Expected 4 cols: SBD, Last, First, Class
+              const data = XLSX.utils.sheet_to_json(ws, {header: 1});
+              // Skip header, map to state
+              const students: RankingStudent[] = [];
+              data.forEach((row: any, idx: number) => {
+                  if (idx === 0) return; // Skip header
+                  if (!row[0]) return;
+                  students.push({
+                      sbd: String(row[0]),
+                      lastName: String(row[1]||''),
+                      firstName: String(row[2]||''),
+                      className: String(row[3]||''),
+                      scores: { math: null, phys: null, chem: null, eng: null, bio: null }
+                  });
+              });
+              // Merge with existing if any, or just set
+              // For simplicity, overwrite
+              setRankingData(students);
+          }
+      };
+      reader.readAsBinaryString(file);
+      e.target.value = '';
+  };
+
+  const processScoreInput = () => {
+      if (!scoreInput.trim()) return;
+      
+      const rows = scoreInput.trim().split('\n');
+      const newMap = new Map<string, any>();
+      
+      rows.forEach(row => {
+          // Expect 9 columns separated by Tab: SBD, Last, First, Class, Math, Phys, Chem, Eng, Bio
+          const cols = row.split('\t');
+          if (cols.length < 1) return;
+          const sbd = String(cols[0]).trim();
+          if (!sbd) return;
+
+          newMap.set(sbd, {
+              math: cols[4] ? parseFloat(cols[4].replace(',', '.')) : null,
+              phys: cols[5] ? parseFloat(cols[5].replace(',', '.')) : null,
+              chem: cols[6] ? parseFloat(cols[6].replace(',', '.')) : null,
+              eng: cols[7] ? parseFloat(cols[7].replace(',', '.')) : null,
+              bio: cols[8] ? parseFloat(cols[8].replace(',', '.')) : null,
+              // Backup info if student list doesn't exist
+              lastName: cols[1],
+              firstName: cols[2],
+              className: cols[3]
+          });
+      });
+
+      // Update ranking data
+      // If rankingData is empty, populate from input
+      let updatedList = [...rankingData];
+      if (updatedList.length === 0) {
+          newMap.forEach((scores, sbd) => {
+              updatedList.push({
+                  sbd,
+                  lastName: scores.lastName || '',
+                  firstName: scores.firstName || '',
+                  className: scores.className || '',
+                  scores: { math: scores.math, phys: scores.phys, chem: scores.chem, eng: scores.eng, bio: scores.bio }
+              });
+          });
+      } else {
+          updatedList = updatedList.map(st => {
+              if (newMap.has(st.sbd)) {
+                  const newScores = newMap.get(st.sbd);
+                  return { ...st, scores: {
+                      math: newScores.math !== null && !isNaN(newScores.math) ? newScores.math : st.scores.math,
+                      phys: newScores.phys !== null && !isNaN(newScores.phys) ? newScores.phys : st.scores.phys,
+                      chem: newScores.chem !== null && !isNaN(newScores.chem) ? newScores.chem : st.scores.chem,
+                      eng: newScores.eng !== null && !isNaN(newScores.eng) ? newScores.eng : st.scores.eng,
+                      bio: newScores.bio !== null && !isNaN(newScores.bio) ? newScores.bio : st.scores.bio,
+                  }};
+              }
+              return st;
+          });
+          
+          // Add students not in list but in scores? (Optional, maybe skip for strictness, but let's add them)
+          newMap.forEach((scores, sbd) => {
+              if (!updatedList.find(s => s.sbd === sbd)) {
+                  updatedList.push({
+                      sbd,
+                      lastName: scores.lastName || '',
+                      firstName: scores.firstName || '',
+                      className: scores.className || '',
+                      scores: { math: scores.math, phys: scores.phys, chem: scores.chem, eng: scores.eng, bio: scores.bio }
+                  });
+              }
+          });
+      }
+      setRankingData(updatedList);
+      setScoreInput("");
+      alert(`Đã cập nhật điểm cho ${newMap.size} học sinh.`);
+  };
+
+  const getFilteredRanking = useMemo(() => {
+      let data = [...rankingData];
+      
+      // Calculate derived scores for sorting/display
+      const processed = data.map(st => {
+          const m = st.scores.math || 0;
+          const p = st.scores.phys || 0;
+          const c = st.scores.chem || 0;
+          const e = st.scores.eng || 0;
+          const b = st.scores.bio || 0;
+
+          const blockA = (st.scores.math===null || st.scores.phys===null || st.scores.chem===null) ? 0 : m + p + c;
+          const blockA1 = (st.scores.math===null || st.scores.phys===null || st.scores.eng===null) ? 0 : m + p + e;
+          // Prompt says Block B is Math+Phys+Chem (Same as A), but standard is Math+Chem+Bio. 
+          // I will implement Math+Chem+Bio for B to provide value.
+          const blockB = (st.scores.math===null || st.scores.chem===null || st.scores.bio===null) ? 0 : m + c + b;
+          
+          const maxBlock = Math.max(blockA, blockA1, blockB);
+
+          let sortValue = 0;
+          if (rankingFilter === 'math') sortValue = m;
+          else if (rankingFilter === 'phys') sortValue = p;
+          else if (rankingFilter === 'chem') sortValue = c;
+          else if (rankingFilter === 'eng') sortValue = e;
+          else if (rankingFilter === 'bio') sortValue = b;
+          else if (rankingFilter === 'A') sortValue = blockA;
+          else if (rankingFilter === 'A1') sortValue = blockA1;
+          else if (rankingFilter === 'B') sortValue = blockB;
+          else if (rankingFilter === 'All') sortValue = maxBlock;
+
+          return { ...st, blockA, blockA1, blockB, maxBlock, sortValue };
+      });
+
+      // Sort
+      processed.sort((a, b) => {
+          if (rankingSort.key === 'sbd') {
+              return rankingSort.direction === 'asc' ? a.sbd.localeCompare(b.sbd) : b.sbd.localeCompare(a.sbd);
+          }
+          if (rankingSort.key === 'name') {
+              // Sort by First Name then Last Name
+              const nameA = a.firstName.toLowerCase();
+              const nameB = b.firstName.toLowerCase();
+              if (nameA < nameB) return rankingSort.direction === 'asc' ? -1 : 1;
+              if (nameA > nameB) return rankingSort.direction === 'asc' ? 1 : -1;
+              return 0;
+          }
+          if (rankingSort.key === 'score') {
+              return rankingSort.direction === 'asc' ? a.sortValue - b.sortValue : b.sortValue - a.sortValue;
+          }
+          return 0;
+      });
+
+      return processed;
+  }, [rankingData, rankingFilter, rankingSort]);
 
   // Re-process when subject changes
   useEffect(() => {
@@ -863,6 +1047,280 @@ const App = () => {
 
   const p2Range = SUBJECTS_CONFIG[activeSubject].parts.p2;
 
+  // Render for Ranking Tab
+  if (activeTab === 'ranking') {
+      return (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#f8fafc' }}>
+            {/* Header */}
+            <header style={{ height: '64px', background: '#1e3a8a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', color: 'white', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontWeight: 700, fontSize: '18px' }}>
+                    <div style={{ width: '36px', height: '36px', background: 'white', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1e3a8a' }}>
+                        <Trophy size={20} />
+                    </div>
+                    <div>
+                        <div style={{ lineHeight: '1.2' }}>TỔNG KẾT VÀ XẾP HẠNG</div>
+                        <div style={{ fontSize: '16px', color: '#93c5fd', fontWeight: 500 }}>NK12</div>
+                    </div>
+                </div>
+                
+                {/* Back to main */}
+                <button 
+                    onClick={() => setActiveTab('stats')}
+                    style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: '8px', padding: '8px 16px', cursor: 'pointer', display: 'flex', gap:'8px', alignItems:'center' }}
+                >
+                    <FileSpreadsheet size={16} /> Về trang chấm thi
+                </button>
+            </header>
+
+            {/* Main Ranking Layout */}
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                
+                {/* Left Sidebar */}
+                <div style={{ width: '260px', background: 'white', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ padding: '20px', fontWeight: 700, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>
+                        CHỨC NĂNG
+                    </div>
+                    <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        <button 
+                            onClick={() => setRankingTab('students')}
+                            style={{ 
+                                padding: '12px 15px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                                background: rankingTab === 'students' ? '#eff6ff' : 'transparent',
+                                color: rankingTab === 'students' ? '#1d4ed8' : '#64748b',
+                                fontWeight: rankingTab === 'students' ? 600 : 500,
+                                display: 'flex', alignItems: 'center', gap: '10px'
+                            }}
+                        >
+                            <Users size={18} /> Danh sách học sinh
+                        </button>
+                        <button 
+                            onClick={() => setRankingTab('scores')}
+                            style={{ 
+                                padding: '12px 15px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                                background: rankingTab === 'scores' ? '#eff6ff' : 'transparent',
+                                color: rankingTab === 'scores' ? '#1d4ed8' : '#64748b',
+                                fontWeight: rankingTab === 'scores' ? 600 : 500,
+                                display: 'flex', alignItems: 'center', gap: '10px'
+                            }}
+                        >
+                            <ClipboardList size={18} /> Dữ liệu điểm
+                        </button>
+                        <button 
+                            onClick={() => setRankingTab('summary')}
+                            style={{ 
+                                padding: '12px 15px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                                background: rankingTab === 'summary' ? '#eff6ff' : 'transparent',
+                                color: rankingTab === 'summary' ? '#1d4ed8' : '#64748b',
+                                fontWeight: rankingTab === 'summary' ? 600 : 500,
+                                display: 'flex', alignItems: 'center', gap: '10px'
+                            }}
+                        >
+                            <TrendingUp size={18} /> Tổng kết
+                        </button>
+                    </div>
+                </div>
+
+                {/* Right Content */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f8fafc' }}>
+                    
+                    {rankingTab === 'summary' && (
+                        <div style={{ padding: '15px 20px', background: 'white', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', overflowX: 'auto', alignItems: 'center' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#64748b', marginRight: '10px' }}>Xem điểm:</span>
+                            {['Toán', 'Lí', 'Hóa', 'Anh', 'Sinh'].map(sub => {
+                                const key = sub === 'Toán' ? 'math' : sub === 'Lí' ? 'phys' : sub === 'Hóa' ? 'chem' : sub === 'Anh' ? 'eng' : 'bio';
+                                const isActive = rankingFilter === key;
+                                return (
+                                    <button 
+                                        key={key} 
+                                        onClick={() => setRankingFilter(key as any)}
+                                        style={{ 
+                                            padding: '6px 14px', borderRadius: '99px', border: '1px solid', fontSize: '13px', cursor: 'pointer',
+                                            borderColor: isActive ? '#2563eb' : '#e2e8f0',
+                                            background: isActive ? '#eff6ff' : 'white',
+                                            color: isActive ? '#1d4ed8' : '#64748b',
+                                            fontWeight: isActive ? 600 : 500
+                                        }}
+                                    >
+                                        {sub}
+                                    </button>
+                                );
+                            })}
+                            <div style={{ width: '1px', height: '20px', background: '#e2e8f0', margin: '0 5px' }}></div>
+                            {[
+                                {k:'A1', l:'Khối A1'}, 
+                                {k:'A', l:'Khối A'}, 
+                                {k:'B', l:'Khối B'}, 
+                                {k:'All', l:'Toàn Khối'}
+                            ].map(block => {
+                                const isActive = rankingFilter === block.k;
+                                return (
+                                    <button 
+                                        key={block.k} 
+                                        onClick={() => setRankingFilter(block.k as any)}
+                                        style={{ 
+                                            padding: '6px 14px', borderRadius: '99px', border: '1px solid', fontSize: '13px', cursor: 'pointer',
+                                            borderColor: isActive ? '#7c3aed' : '#e2e8f0',
+                                            background: isActive ? '#f5f3ff' : 'white',
+                                            color: isActive ? '#7c3aed' : '#64748b',
+                                            fontWeight: isActive ? 600 : 500
+                                        }}
+                                    >
+                                        {block.l}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    <div style={{ flex: 1, padding: '20px', overflow: 'auto' }}>
+                        {rankingTab === 'students' && (
+                            <div style={{ maxWidth: '800px', margin: '0 auto', background: 'white', borderRadius: '12px', padding: '30px', border: '1px solid #e2e8f0' }}>
+                                <h3 style={{ marginTop: 0, color: '#1e3a8a' }}>Danh sách học sinh</h3>
+                                <p style={{ fontSize: '14px', color: '#64748b' }}>Tải lên file Excel (.xlsx) gồm 4 cột: <strong>Số báo danh, Họ, Tên, Lớp</strong>. (Dòng 1 là tiêu đề)</p>
+                                
+                                <div style={{ marginTop: '20px', padding: '30px', border: '2px dashed #cbd5e1', borderRadius: '12px', textAlign: 'center', cursor: 'pointer', background: '#f8fafc' }}
+                                     onClick={() => document.getElementById('rank-student-upload')?.click()}
+                                >
+                                    <input type="file" id="rank-student-upload" accept=".xlsx" style={{display:'none'}} onChange={handleRankingStudentUpload} />
+                                    <Upload size={32} color="#94a3b8" />
+                                    <div style={{ marginTop: '10px', color: '#475569', fontWeight: 500 }}>Chọn file danh sách</div>
+                                </div>
+
+                                <div style={{ marginTop: '30px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                        <strong>Đã tải: {rankingData.length} học sinh</strong>
+                                    </div>
+                                    <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                                        <table style={{ width: '100%', fontSize: '13px' }}>
+                                            <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9' }}>
+                                                <tr>
+                                                    <th style={{textAlign:'left'}}>SBD</th>
+                                                    <th style={{textAlign:'left'}}>Họ</th>
+                                                    <th style={{textAlign:'left'}}>Tên</th>
+                                                    <th style={{textAlign:'left'}}>Lớp</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {rankingData.slice(0, 100).map(st => (
+                                                    <tr key={st.sbd}>
+                                                        <td>{st.sbd}</td>
+                                                        <td>{st.lastName}</td>
+                                                        <td>{st.firstName}</td>
+                                                        <td>{st.className}</td>
+                                                    </tr>
+                                                ))}
+                                                {rankingData.length > 100 && (
+                                                    <tr><td colSpan={4} style={{textAlign:'center', color:'#94a3b8'}}>... và {rankingData.length - 100} học sinh khác ...</td></tr>
+                                                )}
+                                                {rankingData.length === 0 && (
+                                                    <tr><td colSpan={4} style={{textAlign:'center', padding:'20px', color:'#94a3b8'}}>Chưa có dữ liệu</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {rankingTab === 'scores' && (
+                            <div style={{ maxWidth: '1000px', margin: '0 auto', background: 'white', borderRadius: '12px', padding: '30px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                                <h3 style={{ marginTop: 0, color: '#1e3a8a' }}>Nhập dữ liệu điểm</h3>
+                                <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '15px' }}>
+                                    Copy dữ liệu từ Excel và dán vào ô bên dưới. <br/>
+                                    Thứ tự cột bắt buộc (9 cột): <strong>SBD | Họ | Tên | Lớp | Toán | Lí | Hóa | Anh | Sinh</strong>
+                                </p>
+                                <textarea 
+                                    style={{ flex: 1, padding: '15px', borderRadius: '8px', border: '1px solid #cbd5e1', fontFamily: 'monospace', fontSize: '12px', resize: 'none' }}
+                                    placeholder="Paste dữ liệu Excel vào đây..."
+                                    value={scoreInput}
+                                    onChange={(e) => setScoreInput(e.target.value)}
+                                />
+                                <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button 
+                                        onClick={processScoreInput}
+                                        style={{ padding: '10px 24px', background: '#1e3a8a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <TrendingUp size={18} /> Cập nhật điểm
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {rankingTab === 'summary' && (
+                            <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ padding: '15px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', background: '#f8fafc' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                                        Xếp hạng: {
+                                            rankingFilter === 'All' ? 'Toàn Khối' : 
+                                            rankingFilter.length > 3 ? rankingFilter.toUpperCase() : `Khối ${rankingFilter}`
+                                        }
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '15px' }}>
+                                        <button onClick={() => setRankingSort({key:'sbd', direction: rankingSort.direction==='asc'?'desc':'asc'})} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', color: rankingSort.key==='sbd'?'#2563eb':'#64748b' }}>
+                                            SBD {rankingSort.key==='sbd' && (rankingSort.direction==='asc'?<ArrowUp size={14}/>:<ArrowDown size={14}/>)}
+                                        </button>
+                                        <button onClick={() => setRankingSort({key:'name', direction: rankingSort.direction==='asc'?'desc':'asc'})} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', color: rankingSort.key==='name'?'#2563eb':'#64748b' }}>
+                                            Tên {rankingSort.key==='name' && (rankingSort.direction==='asc'?<ArrowUp size={14}/>:<ArrowDown size={14}/>)}
+                                        </button>
+                                        <button onClick={() => setRankingSort({key:'score', direction: rankingSort.direction==='asc'?'desc':'asc'})} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', color: rankingSort.key==='score'?'#2563eb':'#64748b' }}>
+                                            Điểm {rankingSort.key==='score' && (rankingSort.direction==='asc'?<ArrowUp size={14}/>:<ArrowDown size={14}/>)}
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div style={{ flex: 1, overflow: 'auto' }}>
+                                    <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                                        <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 10 }}>
+                                            <tr>
+                                                <th style={{ width: '50px' }}>#</th>
+                                                <th style={{ width: '80px', textAlign: 'left', paddingLeft: '15px' }}>SBD</th>
+                                                <th style={{ width: '180px', textAlign: 'left' }}>Họ và Tên</th>
+                                                <th style={{ width: '60px' }}>Lớp</th>
+                                                {/* Dynamic Headers based on Filter */}
+                                                {(rankingFilter === 'math' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'A1' || rankingFilter === 'B') && <th>Toán</th>}
+                                                {(rankingFilter === 'phys' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'A1' || rankingFilter === 'B') && <th>Lý</th>}
+                                                {(rankingFilter === 'chem' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'B') && <th>Hóa</th>}
+                                                {(rankingFilter === 'eng' || rankingFilter === 'All' || rankingFilter === 'A1') && <th>Anh</th>}
+                                                {(rankingFilter === 'bio' || rankingFilter === 'All' || rankingFilter === 'B') && <th>Sinh</th>}
+                                                
+                                                {(rankingFilter === 'A' || rankingFilter === 'All') && <th style={{background:'#eff6ff', color:'#1d4ed8'}}>Khối A</th>}
+                                                {(rankingFilter === 'A1' || rankingFilter === 'All') && <th style={{background:'#eff6ff', color:'#1d4ed8'}}>Khối A1</th>}
+                                                {(rankingFilter === 'B' || rankingFilter === 'All') && <th style={{background:'#eff6ff', color:'#1d4ed8'}}>Khối B</th>}
+                                                {rankingFilter === 'All' && <th style={{background:'#fef3c7', color:'#b45309'}}>Cao nhất</th>}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {getFilteredRanking.map((st, idx) => (
+                                                <tr key={st.sbd} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderBottom: '1px solid #f1f5f9' }}>
+                                                    <td style={{textAlign:'center', color:'#64748b'}}>{idx+1}</td>
+                                                    <td style={{textAlign:'left', paddingLeft:'15px', fontWeight:600}}>{st.sbd}</td>
+                                                    <td>{st.lastName} {st.firstName}</td>
+                                                    <td style={{textAlign:'center'}}>{st.className}</td>
+                                                    
+                                                    {(rankingFilter === 'math' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'A1' || rankingFilter === 'B') && <td style={{textAlign:'center'}}>{st.scores.math}</td>}
+                                                    {(rankingFilter === 'phys' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'A1' || rankingFilter === 'B') && <td style={{textAlign:'center'}}>{st.scores.phys}</td>}
+                                                    {(rankingFilter === 'chem' || rankingFilter === 'All' || rankingFilter === 'A' || rankingFilter === 'B') && <td style={{textAlign:'center'}}>{st.scores.chem}</td>}
+                                                    {(rankingFilter === 'eng' || rankingFilter === 'All' || rankingFilter === 'A1') && <td style={{textAlign:'center'}}>{st.scores.eng}</td>}
+                                                    {(rankingFilter === 'bio' || rankingFilter === 'All' || rankingFilter === 'B') && <td style={{textAlign:'center'}}>{st.scores.bio}</td>}
+
+                                                    {(rankingFilter === 'A' || rankingFilter === 'All') && <td style={{textAlign:'center', fontWeight:700, color:'#1d4ed8', background:'#eff6ff'}}>{st.blockA > 0 ? st.blockA.toFixed(2) : '-'}</td>}
+                                                    {(rankingFilter === 'A1' || rankingFilter === 'All') && <td style={{textAlign:'center', fontWeight:700, color:'#1d4ed8', background:'#eff6ff'}}>{st.blockA1 > 0 ? st.blockA1.toFixed(2) : '-'}</td>}
+                                                    {(rankingFilter === 'B' || rankingFilter === 'All') && <td style={{textAlign:'center', fontWeight:700, color:'#1d4ed8', background:'#eff6ff'}}>{st.blockB > 0 ? st.blockB.toFixed(2) : '-'}</td>}
+                                                    {rankingFilter === 'All' && <td style={{textAlign:'center', fontWeight:700, color:'#b45309', background:'#fef3c7'}}>{st.maxBlock > 0 ? st.maxBlock.toFixed(2) : '-'}</td>}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+          </div>
+      );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#f8fafc' }}>
       
@@ -944,6 +1402,17 @@ const App = () => {
                         display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
                     }}>
                     <BrainCircuit size={16} /> Phân tích AI
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('ranking')}
+                    style={{ 
+                        padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                        background: '#e2e8f0',
+                        color: '#64748b',
+                        boxShadow: 'none',
+                        display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
+                    }}>
+                    <Trophy size={16} /> Tổng kết
                   </button>
               </div>
 
