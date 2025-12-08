@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -60,6 +60,30 @@ interface ColorConfig {
   lowError: string; // Default Yellow
   highError: string; // Default Red
 }
+
+// --- Ranking & Summary Types ---
+
+interface StudentProfile {
+    id: string;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    class: string;
+}
+
+interface SubjectScores {
+    math?: number;
+    phys?: number;
+    chem?: number;
+    bio?: number;
+    eng?: number;
+    history?: number;
+    it?: number;
+    [key: string]: number | undefined;
+}
+
+// Map: ExamIndex (1-40) -> Map: StudentID -> Scores
+type ExamDataStore = Record<number, Record<string, SubjectScores>>;
 
 // --- Constants ---
 
@@ -391,11 +415,527 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
   return { results, stats };
 };
 
+// --- RANKING & SUMMARY COMPONENT ---
+
+const RankingView = () => {
+    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary'>('students');
+    const [students, setStudents] = useState<StudentProfile[]>([]);
+    const [examData, setExamData] = useState<ExamDataStore>({});
+    const [activeExamTime, setActiveExamTime] = useState<number>(1);
+    const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
+    const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
+
+    // -- Handler: Upload Student List --
+    const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if(!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const bstr = evt.target?.result;
+            const wb = XLSX.read(bstr, { type: 'binary' });
+            const wsname = wb.SheetNames[0];
+            const ws = wb.Sheets[wsname];
+            // Get raw data as array of arrays
+            const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+            const parsedStudents: StudentProfile[] = [];
+            
+            // "Cột 1 là số báo danh, cột 2 là Họ, cột 3 là tên, cột 4 là Lớp"
+            // Indices: 0, 1, 2, 3
+            data.forEach((row, index) => {
+                if (!row || row.length < 2) return;
+                // Try to detect header row and skip it.
+                // If col 0 contains "SBD" or "Số báo danh", skip.
+                const firstCol = String(row[0] || '').trim().toLowerCase();
+                if (firstCol.includes('sbd') || firstCol.includes('số báo danh')) return;
+
+                const id = String(row[0] || '').trim();
+                if (!id) return; // Skip empty IDs
+
+                const lastName = String(row[1] || '').trim();
+                const firstName = String(row[2] || '').trim();
+                const cl = String(row[3] || '').trim();
+                
+                parsedStudents.push({
+                    id,
+                    firstName: firstName,
+                    lastName: lastName,
+                    fullName: `${lastName} ${firstName}`.trim(),
+                    class: cl
+                });
+            });
+
+            setStudents(parsedStudents);
+            e.target.value = ''; // Reset
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    // -- Handler: Upload Scores --
+    const handleScoreUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if(!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const bstr = evt.target?.result;
+            const wb = XLSX.read(bstr, { type: 'binary' });
+            
+            // "file excel có chưa 1 sheets tên là "DIEMKHOI""
+            const sheetName = wb.SheetNames.find((n: string) => n.toUpperCase() === 'DIEMKHOI') || wb.SheetNames[0];
+            const ws = wb.Sheets[sheetName];
+            
+            // "lấy dữ liệu từ cột B4 đến J4, kéo xuống dưới"
+            // "Từ F4 đến J4 là các cột điểm tương ứng là Toán, Lí, Hóa, Anh, Sinh"
+            // B is index 1. F is index 5.
+            // Row 4 in Excel is index 3.
+            
+            const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+            setExamData(prev => {
+                const newData = { ...prev };
+                if (!newData[activeExamTime]) newData[activeExamTime] = {};
+
+                let count = 0;
+                data.forEach((row, rowIndex) => {
+                    // Skip headers. Row 4 (index 3) is likely header or start of table. 
+                    // Let's assume actual data starts at Row 5 (index 4) if Row 4 is header.
+                    // Or we check if B column looks like an ID.
+                    
+                    if (rowIndex < 3) return; // Skip strictly before Row 4.
+                    
+                    const id = String(row[1] || '').trim(); // Column B
+                    // Skip if ID is empty or looks like a header (e.g. "SBD")
+                    if (!id || id.toUpperCase() === 'SBD' || id.toUpperCase() === 'SỐ BÁO DANH') return;
+
+                    const scores: SubjectScores = {};
+                    
+                    // Helper to parse score. Replace comma with dot if VN format? parseFloat handles some, but usually dots.
+                    const p = (val: any) => {
+                        if (val === undefined || val === null || val === '') return undefined;
+                        if (typeof val === 'number') return val;
+                        const s = String(val).replace(',', '.');
+                        const n = parseFloat(s);
+                        return isNaN(n) ? undefined : n;
+                    };
+
+                    // F: Toán (idx 5)
+                    scores.math = p(row[5]);
+                    // G: Lí (idx 6)
+                    scores.phys = p(row[6]);
+                    // H: Hóa (idx 7)
+                    scores.chem = p(row[7]);
+                    // I: Anh (idx 8)
+                    scores.eng = p(row[8]);
+                    // J: Sinh (idx 9)
+                    scores.bio = p(row[9]);
+
+                    if (Object.values(scores).some(v => v !== undefined)) {
+                        newData[activeExamTime][id] = { ...(newData[activeExamTime][id] || {}), ...scores };
+                        count++;
+                    }
+                });
+
+                alert(`Đã tải lên điểm cho Lần ${activeExamTime}: cập nhật ${count} học sinh.`);
+                return newData;
+            });
+            e.target.value = '';
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    // -- Summary Logic --
+    const getClassStats = useMemo(() => {
+        const stats: Record<string, number> = {};
+        students.forEach(s => {
+            const c = s.class || 'Khác';
+            stats[c] = (stats[c] || 0) + 1;
+        });
+        return stats;
+    }, [students]);
+
+    const getComputedData = useMemo(() => {
+        if (!students.length) return [];
+
+        return students.map(s => {
+            const row: any = { ...s };
+            const scores: number[] = [];
+            let sum = 0;
+            let count = 0;
+
+            // Loop 1 to 40
+            for (let i = 1; i <= 40; i++) {
+                const record = examData[i]?.[s.id];
+                let val: number | undefined = undefined;
+
+                if (record) {
+                    if (summaryTab === 'math') val = record.math;
+                    else if (summaryTab === 'phys') val = record.phys;
+                    else if (summaryTab === 'chem') val = record.chem;
+                    else if (summaryTab === 'bio') val = record.bio;
+                    else if (summaryTab === 'eng') val = record.eng;
+                    else if (summaryTab === 'A') {
+                         if (record.math !== undefined && record.phys !== undefined && record.chem !== undefined)
+                            val = record.math + record.phys + record.chem;
+                    }
+                    else if (summaryTab === 'A1') {
+                         if (record.math !== undefined && record.phys !== undefined && record.eng !== undefined)
+                            val = record.math + record.phys + record.eng;
+                    }
+                    else if (summaryTab === 'B') {
+                         if (record.math !== undefined && record.chem !== undefined && record.bio !== undefined)
+                            val = record.math + record.chem + record.bio;
+                    }
+                    else if (summaryTab === 'total') {
+                        let t = 0;
+                        if(record.math) t+=record.math;
+                        if(record.phys) t+=record.phys;
+                        if(record.chem) t+=record.chem;
+                        if(record.bio) t+=record.bio;
+                        if(record.eng) t+=record.eng;
+                        val = t > 0 ? t : undefined;
+                    }
+                }
+
+                if (val !== undefined) {
+                    row[`score_${i}`] = val;
+                    scores.push(val);
+                    sum += val;
+                    count++;
+                }
+            }
+
+            row.avg = count > 0 ? parseFloat((sum / count).toFixed(2)) : null;
+            row.totalVal = sum; // For sorting
+            row.lastScore = scores.length > 0 ? scores[scores.length - 1] : null;
+
+            return row;
+        });
+    }, [students, examData, summaryTab]);
+
+    // Sorting
+    const sortedData = useMemo(() => {
+        if (!sortConfig) return getComputedData;
+        const sorted = [...getComputedData];
+        sorted.sort((a, b) => {
+            let va = a[sortConfig.key];
+            let vb = b[sortConfig.key];
+            
+            // Special handling for nulls (always at bottom)
+            if (va === null || va === undefined) return 1;
+            if (vb === null || vb === undefined) return -1;
+
+            if (sortConfig.key === 'firstName') {
+                 // Sort by First Name then Last Name
+                 if (a.firstName !== b.firstName) return a.firstName.localeCompare(b.firstName) * (sortConfig.direction === 'asc' ? 1 : -1);
+                 return a.lastName.localeCompare(b.lastName) * (sortConfig.direction === 'asc' ? 1 : -1);
+            }
+
+            if (va < vb) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (va > vb) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        return sorted;
+    }, [getComputedData, sortConfig]);
+
+    const handleSort = (key: string) => {
+        let direction: 'asc'|'desc' = 'asc';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+        setSortConfig({ key, direction });
+    };
+
+    const renderSortIcon = (key: string) => {
+         if (sortConfig?.key !== key) return <ArrowUpDown size={12} style={{opacity:0.3}}/>;
+         return sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
+    };
+
+    return (
+        <div style={{ display: 'flex', height: '100%', background: '#f8fafc', overflow: 'hidden' }}>
+            {/* Sidebar Navigation */}
+            <div style={{ width: '220px', background: 'white', borderRight: '1px solid #e2e8f0', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '10px' }}>Chức năng</div>
+                <button 
+                    onClick={() => setSubTab('students')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'students' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'students' ? '#1e3a8a' : '#64748b',
+                        fontWeight: subTab === 'students' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Users size={18} /> Danh sách học sinh
+                </button>
+                <button 
+                    onClick={() => setSubTab('scores')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'scores' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'scores' ? '#1e3a8a' : '#64748b',
+                        fontWeight: subTab === 'scores' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Database size={18} /> Dữ liệu điểm
+                </button>
+                <button 
+                    onClick={() => setSubTab('summary')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'summary' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'summary' ? '#1e3a8a' : '#64748b',
+                        fontWeight: subTab === 'summary' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Award size={18} /> Tổng kết
+                </button>
+            </div>
+
+            {/* Main Content Area */}
+            <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                
+                {/* --- STUDENT LIST VIEW --- */}
+                {subTab === 'students' && (
+                    <div style={{ display: 'flex', gap: '24px', height: '100%' }}>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                            <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ margin: 0, fontSize: '16px', color: '#1e293b' }}>Danh sách học sinh</h3>
+                                <label style={{ 
+                                    padding: '8px 16px', background: '#3b82f6', color: 'white', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                                }}>
+                                    <Upload size={16} /> Tải file Excel
+                                    <input type="file" accept=".xlsx,.xls" hidden onChange={handleStudentUpload} />
+                                </label>
+                            </div>
+                            <div style={{ flex: 1, overflow: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                    <thead style={{ position: 'sticky', top: 0, background: '#f8fafc', zIndex: 5 }}>
+                                        <tr>
+                                            <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>STT</th>
+                                            <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>SBD</th>
+                                            <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Họ và Tên</th>
+                                            <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Lớp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {students.length > 0 ? students.map((s, idx) => (
+                                            <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                <td style={{ padding: '10px' }}>{idx + 1}</td>
+                                                <td style={{ padding: '10px', fontWeight: 600, color: '#475569' }}>{s.id}</td>
+                                                <td style={{ padding: '10px', fontWeight: 500 }}>{s.fullName}</td>
+                                                <td style={{ padding: '10px' }}>{s.class}</td>
+                                            </tr>
+                                        )) : (
+                                            <tr>
+                                                <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Chưa có dữ liệu. Vui lòng tải file danh sách.</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Class Stats Sidebar */}
+                        <div style={{ width: '250px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px', height: 'fit-content' }}>
+                            <h4 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <TrendingUp size={16} /> Thống kê sĩ số
+                            </h4>
+                            {Object.keys(getClassStats).length > 0 ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {Object.entries(getClassStats).sort().map(([cls, count]) => (
+                                        <div key={cls} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontSize: '13px' }}>
+                                            <span style={{ fontWeight: 600, color: '#1e3a8a' }}>{cls}</span>
+                                            <span style={{ fontWeight: 600, color: '#64748b' }}>{count} HS</span>
+                                        </div>
+                                    ))}
+                                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '13px' }}>
+                                        <span>Tổng cộng</span>
+                                        <span>{students.length} HS</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>Chưa có dữ liệu</div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* --- SCORE DATA VIEW --- */}
+                {subTab === 'scores' && (
+                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                         {/* Horizontal Scrollable Tabs 1-40 */}
+                         <div style={{ padding: '10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', gap: '8px' }}>
+                             {Array.from({length: 40}, (_, i) => i + 1).map(num => (
+                                 <button 
+                                    key={num}
+                                    onClick={() => setActiveExamTime(num)}
+                                    style={{
+                                        padding: '8px 16px', borderRadius: '6px', border: '1px solid', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                                        background: activeExamTime === num ? '#1e3a8a' : 'white',
+                                        color: activeExamTime === num ? 'white' : '#64748b',
+                                        borderColor: activeExamTime === num ? '#1e3a8a' : '#cbd5e1',
+                                        minWidth: '70px'
+                                    }}
+                                 >
+                                    Lần {num}
+                                 </button>
+                             ))}
+                         </div>
+
+                         {/* Upload & Preview Area */}
+                         <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                             <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+                                 <h3 style={{ margin: '0 0 10px 0', color: '#1e293b' }}>Dữ liệu điểm - Lần {activeExamTime}</h3>
+                                 <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Tải file Excel (.xlsx) chứa sheet "DIEMKHOI". Cột B là SBD, các cột F, G, H, I, J là điểm.</p>
+                             </div>
+
+                             <label style={{ 
+                                    padding: '12px 24px', background: '#22c55e', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
+                                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(34, 197, 94, 0.3)',
+                                    marginBottom: '30px'
+                                }}>
+                                    <Upload size={18} /> Tải file điểm Lần {activeExamTime}
+                                    <input type="file" accept=".xlsx,.xls,.xlsm" hidden onChange={handleScoreUpload} />
+                             </label>
+                             
+                             {/* Preview of data for this time */}
+                             {examData[activeExamTime] && Object.keys(examData[activeExamTime]).length > 0 ? (
+                                 <div style={{ width: '100%', maxWidth: '600px', background: '#f8fafc', padding: '20px', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+                                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', color: '#059669', fontWeight: 600 }}>
+                                         <RefreshCw size={20} /> Đã có dữ liệu cho Lần {activeExamTime}
+                                     </div>
+                                     <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '13px', color: '#475569' }}>
+                                         Đã nhập điểm cho {Object.keys(examData[activeExamTime]).length} học sinh.
+                                     </div>
+                                 </div>
+                             ) : (
+                                 <div style={{ width: '100%', maxWidth: '600px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', color: '#94a3b8' }}>
+                                     Chưa có dữ liệu điểm cho lần này.
+                                 </div>
+                             )}
+                         </div>
+                     </div>
+                )}
+
+                {/* --- SUMMARY VIEW --- */}
+                {subTab === 'summary' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                        
+                        {/* Subject Tabs */}
+                        <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap' }}>
+                             {[
+                                 {id: 'math', label: 'Toán'},
+                                 {id: 'phys', label: 'Lí'},
+                                 {id: 'chem', label: 'Hóa'},
+                                 {id: 'eng', label: 'Anh'},
+                                 {id: 'bio', label: 'Sinh'},
+                                 {id: 'A', label: 'Khối A (T-L-H)'},
+                                 {id: 'A1', label: 'Khối A1 (T-L-A)'},
+                                 {id: 'B', label: 'Khối B (T-H-S)'},
+                                 {id: 'total', label: 'Tổng Khối'},
+                             ].map(tab => (
+                                 <button 
+                                    key={tab.id}
+                                    onClick={() => setSummaryTab(tab.id as any)}
+                                    style={{
+                                        padding: '8px 16px', borderRadius: '6px', border: '1px solid', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                                        background: summaryTab === tab.id ? '#1e3a8a' : 'white',
+                                        color: summaryTab === tab.id ? 'white' : '#475569',
+                                        borderColor: summaryTab === tab.id ? '#1e3a8a' : '#cbd5e1',
+                                    }}
+                                 >
+                                    {tab.label}
+                                 </button>
+                             ))}
+                             
+                             <div style={{ marginLeft: 'auto' }}>
+                                 <button
+                                   onClick={() => exportToExcel('summary-table', `Tong_Ket_${summaryTab}`)}
+                                   style={{
+                                      padding: '8px 16px', borderRadius: '6px', background: '#059669', border: 'none',
+                                      cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'white',
+                                      display: 'flex', alignItems: 'center', gap: '8px'
+                                   }}
+                                >
+                                   <FileDown size={14} /> Xuất Excel
+                                </button>
+                             </div>
+                        </div>
+
+                        {/* Table */}
+                        <div style={{ flex: 1, overflow: 'auto' }}>
+                            <table id="summary-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1200px' }}>
+                                <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
+                                    <tr>
+                                        <th style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '50px' }}>STT</th>
+                                        <th onClick={() => handleSort('id')} style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', cursor: 'pointer', textAlign: 'left' }}>
+                                            <div style={{display:'flex', alignItems:'center', gap:'4px'}}>SBD {renderSortIcon('id')}</div>
+                                        </th>
+                                        <th onClick={() => handleSort('firstName')} style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', cursor: 'pointer', textAlign: 'left', minWidth: '200px' }}>
+                                            <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderSortIcon('firstName')}</div>
+                                        </th>
+                                        <th onClick={() => handleSort('class')} style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', cursor: 'pointer', width: '80px' }}>
+                                            <div style={{display:'flex', alignItems:'center', gap:'4px', justifyContent: 'center'}}>Lớp {renderSortIcon('class')}</div>
+                                        </th>
+                                        {/* Dynamic Columns for Exams */}
+                                        {Array.from({length: 40}, (_, i) => i + 1).map(num => (
+                                            <th key={num} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '50px', fontSize: '11px', color: '#64748b' }}>
+                                                L{num}
+                                            </th>
+                                        ))}
+                                        <th onClick={() => handleSort('avg')} style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', background: '#e0f2fe', position: 'sticky', right: 0, zIndex: 11, cursor: 'pointer' }}>
+                                            <div style={{display:'flex', alignItems:'center', gap:'4px', justifyContent: 'center'}}>TB/Tổng {renderSortIcon('avg')}</div>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedData.map((row, idx) => (
+                                        <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{idx + 1}</td>
+                                            <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 600, color: '#475569' }}>{row.id}</td>
+                                            <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 500 }}>{row.fullName}</td>
+                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.class}</td>
+                                            
+                                            {Array.from({length: 40}, (_, i) => i + 1).map(num => {
+                                                const val = row[`score_${num}`];
+                                                return (
+                                                    <td key={num} style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', color: val ? '#0f172a' : '#cbd5e1' }}>
+                                                        {val !== undefined ? val : '-'}
+                                                    </td>
+                                                );
+                                            })}
+
+                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', background: '#f0f9ff', position: 'sticky', right: 0, fontWeight: 700, color: '#0369a1' }}>
+                                                {row.avg !== null ? row.avg : '-'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {sortedData.length === 0 && (
+                                        <tr>
+                                            <td colSpan={45} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+                                                Chưa có dữ liệu. Hãy tải danh sách học sinh và điểm các lần thi.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+            </div>
+        </div>
+    );
+};
+
 
 // --- Main App Component ---
 
 const App = () => {
-  const [activeSubject, setActiveSubject] = useState<'math' | 'science' | 'english' | 'it' | 'history'>('math');
+  // Allow 'ranking' string as a valid subject mode
+  const [activeSubject, setActiveSubject] = useState<string>('math');
   const [activeTab, setActiveTab] = useState<'stats' | 'create'>('stats');
   
   // Data State
@@ -461,7 +1001,7 @@ const App = () => {
       const jsonData = XLSX.utils.sheet_to_json(ws);
       setData(jsonData);
       
-      const { results, stats } = processData(jsonData, activeSubject);
+      const { results, stats } = processData(jsonData, activeSubject as any);
       setProcessedResults(results);
       setStats(stats);
       setSortConfig(null);
@@ -477,7 +1017,7 @@ const App = () => {
             const jsonData = XLSX.utils.sheet_to_json(ws);
             setData(jsonData);
             
-            const { results, stats } = processData(jsonData, activeSubject);
+            const { results, stats } = processData(jsonData, activeSubject as any);
             setProcessedResults(results);
             setStats(stats);
             setSortConfig(null);
@@ -495,10 +1035,10 @@ const App = () => {
     e.target.value = ''; // Reset
   };
 
-  // Re-process when subject changes
+  // Re-process when subject changes (only if it's a valid subject type)
   useEffect(() => {
-    if (data) {
-      const { results, stats: newStats } = processData(data, activeSubject);
+    if (data && activeSubject !== 'ranking') {
+      const { results, stats: newStats } = processData(data, activeSubject as any);
       setProcessedResults(results);
       setStats(newStats);
       setQuestionCounts({}); // Reset counts when subject changes
@@ -567,7 +1107,9 @@ const App = () => {
   const filteredWrongStats = useMemo(() => {
       if (!stats) return [];
       const config = SUBJECTS_CONFIG[activeSubject];
-      
+      // Safety check if we are in ranking mode but trying to filter stats (shouldn't happen)
+      if (!config) return [];
+
       return stats.filter(s => {
           // Check percentage threshold first
           if (s.wrongPercent < thresholds.highPercent) return false;
@@ -709,8 +1251,7 @@ const App = () => {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
          <div style={{ background: 'white', borderRadius: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)', width: '600px', overflow: 'hidden' }}>
-             
-             {/* Header */}
+             {/* ... Same Settings UI ... */}
              <div style={{ background: '#1e3a8a', padding: '20px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                  <h2 style={{ margin: 0, color: 'white', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <Settings size={20} /> Cài đặt hệ thống
@@ -861,7 +1402,7 @@ const App = () => {
     );
   }
 
-  const p2Range = SUBJECTS_CONFIG[activeSubject].parts.p2;
+  const p2Range = SUBJECTS_CONFIG[activeSubject] ? SUBJECTS_CONFIG[activeSubject].parts.p2 : { start: 0, end: 0 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#f8fafc' }}>
@@ -915,275 +1456,291 @@ const App = () => {
                 </button>
               );
           })}
+          
+          {/* Add "Tổng kết và Xếp hạng" as a pseudo-subject item */}
+          <button
+            onClick={() => setActiveSubject('ranking')}
+            style={{
+                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', 
+                borderRadius: '99px', // Pill shape
+                border: 'none', cursor: 'pointer', 
+                background: activeSubject === 'ranking' ? '#1e3a8a' : '#f1f5f9',
+                color: activeSubject === 'ranking' ? 'white' : '#64748b',
+                fontWeight: activeSubject === 'ranking' ? 600 : 500,
+                transition: 'all 0.2s ease',
+                fontSize: '14px',
+                boxShadow: activeSubject === 'ranking' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none'
+            }}
+          >
+            <Award size={18} />
+            <span>Tổng kết và Xếp hạng</span>
+          </button>
       </div>
 
       {/* --- MAIN CONTENT --- */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           
-          {/* Sub-Header / Toolbar */}
-          <div style={{ padding: '15px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                  <button 
-                    onClick={() => setActiveTab('stats')}
-                    style={{ 
-                        padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                        background: activeTab === 'stats' ? '#1e3a8a' : '#e2e8f0',
-                        color: activeTab === 'stats' ? 'white' : '#64748b',
-                        boxShadow: activeTab === 'stats' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
-                        display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
-                    }}>
-                    <TableIcon size={16} /> Thống kê điểm
-                  </button>
-                  <button 
-                    onClick={() => setActiveTab('create')}
-                    style={{ 
-                        padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                        background: activeTab === 'create' ? '#1e3a8a' : '#e2e8f0',
-                        color: activeTab === 'create' ? 'white' : '#64748b',
-                        boxShadow: activeTab === 'create' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
-                        display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
-                    }}>
-                    <BrainCircuit size={16} /> Phân tích AI
-                  </button>
-              </div>
-
-              {activeTab === 'stats' && (
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                     {stats && (
-                        <button
-                           onClick={() => exportToExcel('stats-table', fileName)}
-                           style={{
-                              padding: '10px 20px', borderRadius: '99px', background: '#2563eb', border: 'none',
-                              cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
-                              display: 'flex', alignItems: 'center', gap: '8px',
-                              boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
-                           }}
-                        >
-                           <FileDown size={16} /> Tải file Excel
-                        </button>
-                     )}
-                     <button
-                        onClick={() => document.getElementById('re-upload')?.click()}
-                        style={{
-                           padding: '10px 20px', borderRadius: '99px', background: 'white', border: '1px solid #cbd5e1',
-                           cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569',
-                           display: 'flex', alignItems: 'center', gap: '8px',
-                           boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                        }}
-                     >
-                        <RefreshCw size={16} /> Tải file khác
-                     </button>
-                     <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="re-upload" />
+          {/* Sub-Header / Toolbar (Hide if in Ranking mode) */}
+          {activeSubject !== 'ranking' && (
+              <div style={{ padding: '15px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        onClick={() => setActiveTab('stats')}
+                        style={{ 
+                            padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                            background: activeTab === 'stats' ? '#1e3a8a' : '#e2e8f0',
+                            color: activeTab === 'stats' ? 'white' : '#64748b',
+                            boxShadow: activeTab === 'stats' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
+                            display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
+                        }}>
+                        <TableIcon size={16} /> Thống kê điểm
+                      </button>
+                      <button 
+                        onClick={() => setActiveTab('create')}
+                        style={{ 
+                            padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                            background: activeTab === 'create' ? '#1e3a8a' : '#e2e8f0',
+                            color: activeTab === 'create' ? 'white' : '#64748b',
+                            boxShadow: activeTab === 'create' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
+                            display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
+                        }}>
+                        <BrainCircuit size={16} /> Phân tích AI
+                      </button>
+                      {/* Removed Ranking button from here */}
                   </div>
-              )}
-          </div>
+
+                  {activeTab === 'stats' && (
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                         {stats && (
+                            <button
+                               onClick={() => exportToExcel('stats-table', fileName)}
+                               style={{
+                                  padding: '10px 20px', borderRadius: '99px', background: '#2563eb', border: 'none',
+                                  cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
+                                  display: 'flex', alignItems: 'center', gap: '8px',
+                                  boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+                               }}
+                            >
+                               <FileDown size={16} /> Tải file Excel
+                            </button>
+                         )}
+                         <button
+                            onClick={() => document.getElementById('re-upload')?.click()}
+                            style={{
+                               padding: '10px 20px', borderRadius: '99px', background: 'white', border: '1px solid #cbd5e1',
+                               cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569',
+                               display: 'flex', alignItems: 'center', gap: '8px',
+                               boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                            }}
+                         >
+                            <RefreshCw size={16} /> Tải file khác
+                         </button>
+                         <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="re-upload" />
+                      </div>
+                  )}
+              </div>
+          )}
 
           {/* Workspace */}
-          <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px 24px' }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: activeSubject === 'ranking' ? 0 : '0 24px 24px 24px' }}>
              
-                {activeTab === 'stats' && (
-                    <div style={{ animation: 'fadeIn 0.3s ease-out', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                        
-                        {/* Empty State / Upload */}
-                        {!stats && (
-                           <div style={{ 
-                                padding: '60px', background: 'white', borderRadius: '16px', border: '2px dashed #cbd5e1', 
-                                textAlign: 'center', transition: 'border-color 0.2s', maxWidth: '600px', margin: '40px auto'
-                            }}
-                            onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#3b82f6'; }}
-                            onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
-                            onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; /* Handle drop */ }}
-                            >
-                                <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="data-upload" />
-                                <label htmlFor="data-upload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                                    <div style={{ width: '80px', height: '80px', background: '#eff6ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Upload size={36} color="#3b82f6" />
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '18px', fontWeight: 600, color: '#1e293b' }}>
-                                            Tải lên file ZipGrade
+                {activeSubject === 'ranking' ? (
+                    <RankingView />
+                ) : (
+                    <>
+                    {/* ... Existing Stats/Create Views ... */}
+                    {activeTab === 'stats' && (
+                        <div style={{ animation: 'fadeIn 0.3s ease-out', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                            {/* Empty State / Upload */}
+                            {!stats && (
+                               <div style={{ 
+                                    padding: '60px', background: 'white', borderRadius: '16px', border: '2px dashed #cbd5e1', 
+                                    textAlign: 'center', transition: 'border-color 0.2s', maxWidth: '600px', margin: '40px auto'
+                                }}
+                                onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#3b82f6'; }}
+                                onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                                onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; /* Handle drop */ }}
+                                >
+                                    <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="data-upload" />
+                                    <label htmlFor="data-upload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                                        <div style={{ width: '80px', height: '80px', background: '#eff6ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <Upload size={36} color="#3b82f6" />
                                         </div>
-                                        <div style={{ fontSize: '14px', color: '#64748b', marginTop: '6px' }}>Hỗ trợ định dạng Excel (.xlsx) hoặc CSV</div>
-                                    </div>
-                                </label>
-                            </div>
-                        )}
-
-                        {processedResults && stats && (
-                            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', height: '100%', border: '1px solid #e2e8f0' }}>
-                                
-                                {/* Top Summary Bar */}
-                                <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' }}>
-                                    <div style={{ display: 'flex', gap: '24px', fontSize: '13px', fontWeight: 500, alignItems: 'center' }}>
-                                        {/* Legend with Custom Styles */}
-                                        <div style={{ display: 'flex', gap: '15px', borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
-                                            <div style={{ 
-                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                            }}>
-                                                <span style={{width:'12px', height:'12px', background: DEFAULT_COLORS.blue, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                0 Sai
+                                        <div>
+                                            <div style={{ fontSize: '18px', fontWeight: 600, color: '#1e293b' }}>
+                                                Tải lên file ZipGrade
                                             </div>
-                                            <div style={{ 
-                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                            }}>
-                                                <span style={{width:'12px', height:'12px', background: customColors.lowError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                &lt;{thresholds.lowCount} Sai
-                                            </div>
-                                            <div style={{ 
-                                                display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                            }}>
-                                                <span style={{width:'12px', height:'12px', background: customColors.highError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                &gt;{thresholds.highPercent}% Sai
-                                            </div>
+                                            <div style={{ fontSize: '14px', color: '#64748b', marginTop: '6px' }}>Hỗ trợ định dạng Excel (.xlsx) hoặc CSV</div>
                                         </div>
-                                        {/* Stats */}
-                                        <div style={{ display: 'flex', gap: '15px', color: '#334155' }}>
-                                            <div>TB: <strong>{summaryStats.avg}</strong></div>
-                                            <div>Max: <strong style={{color:'#16a34a'}}>{summaryStats.max}</strong></div>
-                                            <div>Min: <strong style={{color:'#dc2626'}}>{summaryStats.min}</strong></div>
-                                        </div>
-                                    </div>
-                                    <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                        File: <strong>{fileName}</strong>
-                                    </div>
+                                    </label>
                                 </div>
+                            )}
 
-                                {/* Scrollable Table Area */}
-                                <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
-                                    <table id="stats-table" style={{ width: '100%', fontSize: '12px', borderCollapse: 'separate', borderSpacing: 0, minWidth: '1500px' }}>
-                                        <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                                            {/* Row 1: Headers & Sorting */}
-                                            <tr style={{ background: '#f1f5f9' }}>
-                                                <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', width: '40px' }}>STT</th>
-                                                <th onClick={() => handleSort('sbd')} style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
-                                                   <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>SBD {renderSortIcon('sbd')}</div>
-                                                </th>
-                                                <th onClick={() => handleSort('name')} style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', cursor: 'pointer', userSelect: 'none', minWidth: '220px' }}>
-                                                   <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderSortIcon('name')}</div>
-                                                </th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1' }}>Mã</th>
-                                                <th onClick={() => handleSort('total')} style={{ borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
-                                                   <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>Điểm {renderSortIcon('total')}</div>
-                                                </th>
-                                                <th onClick={() => handleSort('p1')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P1 {renderSortIcon('p1')}</th>
-                                                <th onClick={() => handleSort('p2')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P2 {renderSortIcon('p2')}</th>
-                                                <th onClick={() => handleSort('p3')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', borderRight: '2px solid #94a3b8', cursor: 'pointer', userSelect: 'none' }}>P3 {renderSortIcon('p3')}</th>
-                                                {stats.map(s => {
-                                                   const isPart2 = s.index >= p2Range.start && s.index <= p2Range.end;
-                                                   return (
-                                                    <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', minWidth: '24px', background: isPart2 ? '#fefce8' : '#f1f5f9' }}>
-                                                        {getPart2Label(s.index, activeSubject)}
-                                                    </th>
-                                                   );
-                                                })}
-                                            </tr>
-                                            
-                                            {/* Row 2: Correct Keys */}
-                                            <tr style={{ background: '#e2e8f0' }}>
-                                                <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', color: '#475569', fontSize: '11px', minWidth: '220px' }}>Đáp án đúng</th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                <th style={{ borderBottom: '1px solid #cbd5e1', borderRight: '2px solid #94a3b8' }}></th>
-                                                {stats.map(s => {
-                                                   const isPart2 = s.index >= p2Range.start && s.index <= p2Range.end;
-                                                   return (
-                                                    <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', color: '#16a34a', background: isPart2 ? '#fefce8' : '#e2e8f0' }}>
-                                                        {s.correctKey}
-                                                    </th>
-                                                   );
-                                                })}
-                                            </tr>
+                            {processedResults && stats && (
+                                <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', height: '100%', border: '1px solid #e2e8f0' }}>
+                                    {/* ... Stats Table Implementation ... */}
+                                    <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' }}>
+                                        <div style={{ display: 'flex', gap: '24px', fontSize: '13px', fontWeight: 500, alignItems: 'center' }}>
+                                            {/* Legend */}
+                                            <div style={{ display: 'flex', gap: '15px', borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
+                                                <div style={{ 
+                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                                }}>
+                                                    <span style={{width:'12px', height:'12px', background: DEFAULT_COLORS.blue, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                    0 Sai
+                                                </div>
+                                                <div style={{ 
+                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                                }}>
+                                                    <span style={{width:'12px', height:'12px', background: customColors.lowError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                    &lt;{thresholds.lowCount} Sai
+                                                </div>
+                                                <div style={{ 
+                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
+                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
+                                                }}>
+                                                    <span style={{width:'12px', height:'12px', background: customColors.highError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
+                                                    &gt;{thresholds.highPercent}% Sai
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '15px', color: '#334155' }}>
+                                                <div>TB: <strong>{summaryStats.avg}</strong></div>
+                                                <div>Max: <strong style={{color:'#16a34a'}}>{summaryStats.max}</strong></div>
+                                                <div>Min: <strong style={{color:'#dc2626'}}>{summaryStats.min}</strong></div>
+                                            </div>
+                                        </div>
+                                        <div style={{ fontSize: '13px', color: '#64748b' }}>
+                                            File: <strong>{fileName}</strong>
+                                        </div>
+                                    </div>
 
-                                            {/* Row 3: Stats */}
-                                            <tr style={{ background: '#f8fafc' }}>
-                                                <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8', textAlign: 'left', paddingLeft: '10px', color: '#64748b', fontSize: '11px', minWidth: '220px' }}>Thống kê (Số lượng/%)</th>
-                                                <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                <th style={{ borderBottom: '2px solid #94a3b8', borderRight: '2px solid #94a3b8' }}></th>
-                                                {stats.map(s => (
-                                                    <th key={s.index} style={{ padding: '4px', background: getCellColor(s.wrongCount, s.wrongPercent), borderBottom: '2px solid #94a3b8', minWidth: '24px', fontSize: '10px', color: '#475569' }}>
-                                                        <div>{s.wrongCount}</div>
-                                                        <div style={{fontSize: '9px', opacity: 0.8}}>{s.wrongPercent}%</div>
+                                    <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+                                        <table id="stats-table" style={{ width: '100%', fontSize: '12px', borderCollapse: 'separate', borderSpacing: 0, minWidth: '1500px' }}>
+                                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                                                {/* Header Rows */}
+                                                <tr style={{ background: '#f1f5f9' }}>
+                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', width: '40px' }}>STT</th>
+                                                    <th onClick={() => handleSort('sbd')} style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
+                                                       <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>SBD {renderSortIcon('sbd')}</div>
                                                     </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {sortedResults.map((st, idx) => (
-                                                <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
-                                                    <td style={{ position: 'sticky', left: 0, background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9' }}>{idx + 1}</td>
-                                                    <td style={{ position: 'sticky', left: '40px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', fontFamily: 'monospace' }}>{st.sbd}</td>
-                                                    <td style={{ 
-                                                        position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', 
-                                                        borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', 
-                                                        textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle', minWidth: '220px'
-                                                    }}>
-                                                        {/* Restrict to 2 lines max */}
-                                                        <div style={{ 
-                                                            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', 
-                                                            overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '1.4', maxHeight: '2.8em' 
-                                                        }}>
-                                                            {st.name}
-                                                        </div>
-                                                    </td>
-                                                    <td style={{ borderBottom: '1px solid #f1f5f9' }}>{st.code}</td>
-                                                    <td style={{ borderBottom: '1px solid #f1f5f9', fontWeight: 'bold', color: getScoreColor(st.scores.total) }}>{st.scores.total}</td>
-                                                    <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p1}</td>
-                                                    <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p2}</td>
-                                                    <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px', borderRight: '2px solid #e2e8f0' }}>{st.scores.p3}</td>
+                                                    <th onClick={() => handleSort('name')} style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', cursor: 'pointer', userSelect: 'none', minWidth: '220px' }}>
+                                                       <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderSortIcon('name')}</div>
+                                                    </th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}>Mã</th>
+                                                    <th onClick={() => handleSort('total')} style={{ borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
+                                                       <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>Điểm {renderSortIcon('total')}</div>
+                                                    </th>
+                                                    <th onClick={() => handleSort('p1')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P1 {renderSortIcon('p1')}</th>
+                                                    <th onClick={() => handleSort('p2')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P2 {renderSortIcon('p2')}</th>
+                                                    <th onClick={() => handleSort('p3')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', borderRight: '2px solid #94a3b8', cursor: 'pointer', userSelect: 'none' }}>P3 {renderSortIcon('p3')}</th>
                                                     {stats.map(s => {
-                                                        const isCorrect = st.details[s.index] === 'T';
-                                                        const isPart2 = s.index >= p2Range.start && s.index <= p2Range.end;
-                                                        
-                                                        // Determine background color based on status and settings
-                                                        let bgColor = 'transparent';
-                                                        if (isCorrect) {
-                                                            bgColor = isPart2 ? DEFAULT_COLORS.yellow : 'transparent';
-                                                        } else {
-                                                            // For cells, use a slightly lighter version of user color or default red
-                                                            // Simple logic: if user chose a color, try to match intent or fallback to simple red tint
-                                                            // Since we can't easily darken arbitrary hex without library, stick to a light red for cells
-                                                            // or use the user's high error color directly if they want
-                                                            bgColor = '#fecaca'; 
-                                                        }
-
-                                                        return (
-                                                            <td key={s.index} style={{ 
-                                                                borderBottom: '1px solid #f1f5f9', 
-                                                                background: bgColor,
-                                                                color: isCorrect ? '#cbd5e1' : '#b91c1c',
-                                                                fontSize: '11px', fontWeight: isCorrect ? 400 : 700,
-                                                                padding: '2px',
-                                                                borderLeft: '1px solid #f1f5f9'
-                                                            }}>
-                                                                {isCorrect ? '•' : st.rawAnswers[s.index]}
-                                                            </td>
-                                                        );
+                                                       const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
+                                                       return (
+                                                        <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', minWidth: '24px', background: isPart2 ? '#fefce8' : '#f1f5f9' }}>
+                                                            {getPart2Label(s.index, activeSubject as any)}
+                                                        </th>
+                                                       );
                                                     })}
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                                                
+                                                {/* Row 2: Correct Keys */}
+                                                <tr style={{ background: '#e2e8f0' }}>
+                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', color: '#475569', fontSize: '11px', minWidth: '220px' }}>Đáp án đúng</th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
+                                                    <th style={{ borderBottom: '1px solid #cbd5e1', borderRight: '2px solid #94a3b8' }}></th>
+                                                    {stats.map(s => {
+                                                       const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
+                                                       return (
+                                                        <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', color: '#16a34a', background: isPart2 ? '#fefce8' : '#e2e8f0' }}>
+                                                            {s.correctKey}
+                                                        </th>
+                                                       );
+                                                    })}
+                                                </tr>
 
-                {activeTab === 'create' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto', height: '100%' }}>
-                        {/* Control Panel */}
+                                                {/* Row 3: Stats */}
+                                                <tr style={{ background: '#f8fafc' }}>
+                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8', textAlign: 'left', paddingLeft: '10px', color: '#64748b', fontSize: '11px', minWidth: '220px' }}>Thống kê (Số lượng/%)</th>
+                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
+                                                    <th style={{ borderBottom: '2px solid #94a3b8', borderRight: '2px solid #94a3b8' }}></th>
+                                                    {stats.map(s => (
+                                                        <th key={s.index} style={{ padding: '4px', background: getCellColor(s.wrongCount, s.wrongPercent), borderBottom: '2px solid #94a3b8', minWidth: '24px', fontSize: '10px', color: '#475569' }}>
+                                                            <div>{s.wrongCount}</div>
+                                                            <div style={{fontSize: '9px', opacity: 0.8}}>{s.wrongPercent}%</div>
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {sortedResults.map((st, idx) => (
+                                                    <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                                                        <td style={{ position: 'sticky', left: 0, background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9' }}>{idx + 1}</td>
+                                                        <td style={{ position: 'sticky', left: '40px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', fontFamily: 'monospace' }}>{st.sbd}</td>
+                                                        <td style={{ 
+                                                            position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', 
+                                                            borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', 
+                                                            textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle', minWidth: '220px'
+                                                        }}>
+                                                            <div style={{ 
+                                                                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', 
+                                                                overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '1.4', maxHeight: '2.8em' 
+                                                            }}>
+                                                                {st.name}
+                                                            </div>
+                                                        </td>
+                                                        <td style={{ borderBottom: '1px solid #f1f5f9' }}>{st.code}</td>
+                                                        <td style={{ borderBottom: '1px solid #f1f5f9', fontWeight: 'bold', color: getScoreColor(st.scores.total) }}>{st.scores.total}</td>
+                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p1}</td>
+                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p2}</td>
+                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px', borderRight: '2px solid #e2e8f0' }}>{st.scores.p3}</td>
+                                                        {stats.map(s => {
+                                                            const isCorrect = st.details[s.index] === 'T';
+                                                            const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
+                                                            let bgColor = 'transparent';
+                                                            if (isCorrect) {
+                                                                bgColor = isPart2 ? DEFAULT_COLORS.yellow : 'transparent';
+                                                            } else {
+                                                                bgColor = '#fecaca'; 
+                                                            }
+                                                            return (
+                                                                <td key={s.index} style={{ 
+                                                                    borderBottom: '1px solid #f1f5f9', 
+                                                                    background: bgColor,
+                                                                    color: isCorrect ? '#cbd5e1' : '#b91c1c',
+                                                                    fontSize: '11px', fontWeight: isCorrect ? 400 : 700,
+                                                                    padding: '2px',
+                                                                    borderLeft: '1px solid #f1f5f9'
+                                                                }}>
+                                                                    {isCorrect ? '•' : st.rawAnswers[s.index]}
+                                                                </td>
+                                                            );
+                                                        })}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'create' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto', height: '100%' }}>
+                            {/* ... Create Exam View Logic Same as Before ... */}
+                            {/* Control Panel */}
                         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                             <div style={{ background: 'white', padding: '20px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%' }}>
                                 <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
@@ -1243,7 +1800,7 @@ const App = () => {
                                                         }}>
                                                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                                                                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>
-                                                                    Câu {getPart2Label(s.index, activeSubject)}
+                                                                    Câu {getPart2Label(s.index, activeSubject as any)}
                                                                 </span>
                                                                 <span style={{ fontSize: '11px', color: '#881337' }}>
                                                                     Sai: {s.wrongPercent}% ({s.wrongCount} HS)
@@ -1318,7 +1875,10 @@ const App = () => {
                                 </div>
                             </div>
                         </div>
-                    </div>
+
+                        </div>
+                    )}
+                    </>
                 )}
 
              </div>
