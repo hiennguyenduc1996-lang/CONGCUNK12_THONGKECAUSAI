@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2 } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -12,30 +12,30 @@ declare const XLSX: any;
 interface StudentResult {
   sbd: string;
   name: string;
-  firstName: string; // Added for sorting
-  lastName: string;  // Added for sorting
+  firstName: string; 
+  lastName: string;  
   code: string;
-  rawAnswers: Record<string, string>; // Key: Question Index (1, 2, ...), Value: Answer (A, B, C, D)
+  rawAnswers: Record<string, string>; 
   scores: {
     total: number;
     p1: number;
     p2: number;
     p3: number;
   };
-  details: Record<string, 'T' | 'F'>; // Key: Question Index, Value: T (Correct) or F (Wrong)
+  details: Record<string, 'T' | 'F'>; 
 }
 
 interface QuestionStat {
   index: number;
   wrongCount: number;
   wrongPercent: number;
-  correctKey: string; // Store the correct answer key
+  correctKey: string; 
 }
 
 interface DocFile {
   id: string;
   name: string;
-  content: string; // Base64 or Text
+  content: string; 
   type: 'pdf' | 'text';
 }
 
@@ -46,19 +46,19 @@ interface SubjectConfig {
   totalQuestions: number;
   parts: {
     p1: { start: number; end: number; scorePerQ: number };
-    p2: { start: number; end: number; scorePerGroup: number }; // Special logic
+    p2: { start: number; end: number; scorePerGroup: number }; 
     p3: { start: number; end: number; scorePerQ: number };
   };
 }
 
 interface ThresholdConfig {
-  lowCount: number; // e.g., < 5 students wrong
-  highPercent: number; // e.g., > 40% students wrong
+  lowCount: number; 
+  highPercent: number; 
 }
 
 interface ColorConfig {
-  lowError: string; // Default Yellow
-  highError: string; // Default Red
+  lowError: string; 
+  highError: string; 
 }
 
 // --- Ranking & Summary Types ---
@@ -95,7 +95,7 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     totalQuestions: 34,
     parts: {
       p1: { start: 1, end: 12, scorePerQ: 0.25 },
-      p2: { start: 13, end: 28, scorePerGroup: 1.0 }, // 4 questions per group
+      p2: { start: 13, end: 28, scorePerGroup: 1.0 }, 
       p3: { start: 29, end: 34, scorePerQ: 0.5 },
     }
   },
@@ -106,7 +106,7 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     totalQuestions: 40,
     parts: {
       p1: { start: 1, end: 18, scorePerQ: 0.25 },
-      p2: { start: 19, end: 34, scorePerGroup: 1.0 }, // 4 questions per group
+      p2: { start: 19, end: 34, scorePerGroup: 1.0 }, 
       p3: { start: 35, end: 40, scorePerQ: 0.25 },
     }
   },
@@ -125,11 +125,10 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     id: 'it',
     name: 'Tin học',
     type: 'it',
-    // 28 MC + 3 TF questions (each TF has 4 sub-parts => 12 items). Total columns = 40.
     totalQuestions: 40, 
     parts: {
       p1: { start: 1, end: 28, scorePerQ: 0.25 },
-      p2: { start: 29, end: 40, scorePerGroup: 1.0 }, // 3 groups of 4 items
+      p2: { start: 29, end: 40, scorePerGroup: 1.0 },
       p3: { start: 0, end: 0, scorePerQ: 0 },
     }
   },
@@ -137,11 +136,10 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     id: 'history',
     name: 'Lịch sử',
     type: 'history',
-    // 24 MC + 4 TF questions (each TF has 4 sub-parts => 16 items). Total columns = 40.
     totalQuestions: 40,
     parts: {
       p1: { start: 1, end: 24, scorePerQ: 0.25 },
-      p2: { start: 25, end: 40, scorePerGroup: 1.0 }, // 4 groups of 4 items
+      p2: { start: 25, end: 40, scorePerGroup: 1.0 }, 
       p3: { start: 0, end: 0, scorePerQ: 0 },
     }
   }
@@ -181,7 +179,6 @@ const extractTextFromDocx = async (file: File): Promise<string> => {
   });
 };
 
-// Calculate Score for Part 2 (Group Questions)
 const calculateGroupScore = (correctCount: number): number => {
   switch (correctCount) {
     case 1: return 0.1;
@@ -194,12 +191,11 @@ const calculateGroupScore = (correctCount: number): number => {
 
 const getPart2Label = (index: number, subjectType: string): string => {
   const config = SUBJECTS_CONFIG[subjectType];
+  if (!config) return String(index);
   const p2 = config.parts.p2;
   
   if (index < p2.start || index > p2.end) return String(index);
 
-  // Calculate group number and character
-  // Math: 13-16 -> 1a-1d
   const relativeIndex = index - p2.start;
   const groupNum = Math.floor(relativeIndex / 4) + 1;
   const charCode = 97 + (relativeIndex % 4); // 97 is 'a'
@@ -210,11 +206,7 @@ const getPart2Label = (index: number, subjectType: string): string => {
 const exportToExcel = (elementId: string, fileName: string) => {
     const table = document.getElementById(elementId);
     if (!table || typeof XLSX === 'undefined') return;
-
-    // Create a new workbook
     const wb = XLSX.utils.table_to_book(table, { sheet: "ThongKe" });
-    
-    // Write the workbook to a file
     XLSX.writeFile(wb, `${fileName || 'Thong_ke'}.xlsx`);
 };
 
@@ -239,15 +231,11 @@ const exportExamToWord = (content: string, fileName: string) => {
         </html>
     `;
 
-    const blob = new Blob(['\ufeff', htmlContent], {
-        type: 'application/msword'
-    });
-    
-    // Create download link
+    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName || 'De_On_Tap'}.doc`; // Save as .doc for HTML content compatibility
+    link.download = `${fileName || 'De_On_Tap'}.doc`; 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -260,63 +248,39 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
   const config = SUBJECTS_CONFIG[subjectType];
   
   const results: StudentResult[] = [];
-  const questionStats: Record<number, number> = {}; // Index -> Wrong Count
-  const correctKeysForDisplay: Record<number, string> = {}; // Index -> Correct Key (First found found, mainly for display)
+  const questionStats: Record<number, number> = {}; 
+  const correctKeysForDisplay: Record<number, string> = {}; 
+  const uniqueKeysPerQuestion: Record<number, Set<string>> = {};
 
-  // Store keys by Version to support multiple exam codes
-  const keysByVersion: Record<string, Record<number, string>> = {};
-
-  // Initialize stats
   for (let i = 1; i <= config.totalQuestions; i++) {
     questionStats[i] = 0;
     correctKeysForDisplay[i] = ''; 
+    uniqueKeysPerQuestion[i] = new Set();
   }
 
   data.forEach(row => {
-    // Basic validation to ensure it's a student row (has StudentID or Name)
     if (!row['StudentID'] && !row['LastName'] && !row['FirstName']) return;
 
-    // Determine Key Version / Exam Code
-    const version = String(row['Key Version'] || row['Exam Code'] || 'default').trim();
-
+    const version = String(row['Key Version'] || row['Exam Code'] || row['Mã đề'] || 'default').trim();
     let p1Score = 0;
     let p2Score = 0;
     let p3Score = 0;
     const details: Record<string, 'T' | 'F'> = {};
     const rawAnswers: Record<string, string> = {};
 
-    // Helper to get answer and key safely from ZipGrade format
     const checkQuestion = (idx: number) => {
-      // ZipGrade format: Stu1, Stu2... and PriKey1, PriKey2...
       const stCol = `Stu${idx}`;
       const keyCol = `PriKey${idx}`;
-      
       const stAns = String(row[stCol] || '').trim().toUpperCase();
-      
-      // LOGIC:
-      // 1. Try to get key from this specific row (PriKeyX) - this handles multiple versions automatically in ZipGrade
-      // 2. Fallback to cached key for this version if row data is missing
       let keyAns = String(row[keyCol] || '').trim().toUpperCase();
 
-      if (!keyAns && keysByVersion[version] && keysByVersion[version][idx]) {
-          keyAns = keysByVersion[version][idx];
-      }
-
-      // Cache the key for this version if found
       if (keyAns) {
-          if (!keysByVersion[version]) keysByVersion[version] = {};
-          keysByVersion[version][idx] = keyAns;
-
-          // Update display key (using the first one encountered or overwriting is fine for simple stats)
+          uniqueKeysPerQuestion[idx].add(keyAns);
           if (!correctKeysForDisplay[idx]) correctKeysForDisplay[idx] = keyAns;
       }
-
       rawAnswers[idx] = stAns;
-      
       if (!keyAns) return false;
-
-      const isCorrect = stAns === keyAns;
-      return isCorrect;
+      return stAns === keyAns;
     };
 
     // --- Part 1 ---
@@ -332,15 +296,13 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       }
     }
 
-    // --- Part 2 (Group Logic) ---
+    // --- Part 2 ---
     if (config.parts.p2.end > 0) {
-      // Iterate by groups of 4
       for (let i = config.parts.p2.start; i <= config.parts.p2.end; i += 4) {
         let correctInGroup = 0;
         for (let j = 0; j < 4; j++) {
            const currentQ = i + j;
            if (currentQ > config.parts.p2.end) break;
-           
            const isCorrect = checkQuestion(currentQ);
            if (isCorrect) {
              correctInGroup++;
@@ -368,13 +330,11 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       }
     }
 
-    // Handle rounding errors
     p1Score = Math.round(p1Score * 100) / 100;
     p2Score = Math.round(p2Score * 100) / 100;
     p3Score = Math.round(p3Score * 100) / 100;
     const totalScore = Math.round((p1Score + p2Score + p3Score) * 100) / 100;
 
-    // Handle Name Order (Swapped based on user request "FirstName + LastName")
     const fName = String(row['FirstName'] || '').trim();
     const lName = String(row['LastName'] || '').trim();
     const fullName = `${fName} ${lName}`.trim(); 
@@ -386,22 +346,20 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       name: fullName,
       code: version,
       rawAnswers,
-      scores: {
-        total: totalScore,
-        p1: p1Score,
-        p2: p2Score,
-        p3: p3Score,
-      },
+      scores: { total: totalScore, p1: p1Score, p2: p2Score, p3: p3Score },
       details
     });
   });
 
-  // Calculate percentages
   const stats: QuestionStat[] = [];
   const totalStudents = results.length;
-  // If multiple versions exist, showing a single "Correct Key" in the header is ambiguous.
-  // We will show the key from the first version encountered, or indicate mixed.
-  const isMultiVersion = Object.keys(keysByVersion).length > 1;
+  let isMultiVersion = false;
+  for (let i = 1; i <= config.totalQuestions; i++) {
+      if (uniqueKeysPerQuestion[i].size > 1) {
+          isMultiVersion = true;
+          break;
+      }
+  }
 
   for (let i = 1; i <= config.totalQuestions; i++) {
     stats.push({
@@ -425,7 +383,6 @@ const RankingView = () => {
     const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
 
-    // -- Handler: Upload Student List --
     const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if(!file) return;
@@ -436,22 +393,16 @@ const RankingView = () => {
             const wb = XLSX.read(bstr, { type: 'binary' });
             const wsname = wb.SheetNames[0];
             const ws = wb.Sheets[wsname];
-            // Get raw data as array of arrays
             const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-
             const parsedStudents: StudentProfile[] = [];
             
-            // "Cột 1 là số báo danh, cột 2 là Họ, cột 3 là tên, cột 4 là Lớp"
-            // Indices: 0, 1, 2, 3
             data.forEach((row, index) => {
                 if (!row || row.length < 2) return;
-                // Try to detect header row and skip it.
-                // If col 0 contains "SBD" or "Số báo danh", skip.
                 const firstCol = String(row[0] || '').trim().toLowerCase();
                 if (firstCol.includes('sbd') || firstCol.includes('số báo danh')) return;
 
                 const id = String(row[0] || '').trim();
-                if (!id) return; // Skip empty IDs
+                if (!id) return;
 
                 const lastName = String(row[1] || '').trim();
                 const firstName = String(row[2] || '').trim();
@@ -465,14 +416,12 @@ const RankingView = () => {
                     class: cl
                 });
             });
-
             setStudents(parsedStudents);
-            e.target.value = ''; // Reset
+            e.target.value = ''; 
         };
         reader.readAsBinaryString(file);
     };
 
-    // -- Handler: Upload Scores --
     const handleScoreUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if(!file) return;
@@ -481,16 +430,8 @@ const RankingView = () => {
         reader.onload = (evt) => {
             const bstr = evt.target?.result;
             const wb = XLSX.read(bstr, { type: 'binary' });
-            
-            // "file excel có chưa 1 sheets tên là "DIEMKHOI""
             const sheetName = wb.SheetNames.find((n: string) => n.toUpperCase() === 'DIEMKHOI') || wb.SheetNames[0];
             const ws = wb.Sheets[sheetName];
-            
-            // "lấy dữ liệu từ cột B4 đến J4, kéo xuống dưới"
-            // "Từ F4 đến J4 là các cột điểm tương ứng là Toán, Lí, Hóa, Anh, Sinh"
-            // B is index 1. F is index 5.
-            // Row 4 in Excel is index 3.
-            
             const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
             setExamData(prev => {
@@ -499,19 +440,11 @@ const RankingView = () => {
 
                 let count = 0;
                 data.forEach((row, rowIndex) => {
-                    // Skip headers. Row 4 (index 3) is likely header or start of table. 
-                    // Let's assume actual data starts at Row 5 (index 4) if Row 4 is header.
-                    // Or we check if B column looks like an ID.
-                    
-                    if (rowIndex < 3) return; // Skip strictly before Row 4.
-                    
-                    const id = String(row[1] || '').trim(); // Column B
-                    // Skip if ID is empty or looks like a header (e.g. "SBD")
+                    if (rowIndex < 3) return; 
+                    const id = String(row[1] || '').trim(); 
                     if (!id || id.toUpperCase() === 'SBD' || id.toUpperCase() === 'SỐ BÁO DANH') return;
 
                     const scores: SubjectScores = {};
-                    
-                    // Helper to parse score. Replace comma with dot if VN format? parseFloat handles some, but usually dots.
                     const p = (val: any) => {
                         if (val === undefined || val === null || val === '') return undefined;
                         if (typeof val === 'number') return val;
@@ -520,15 +453,10 @@ const RankingView = () => {
                         return isNaN(n) ? undefined : n;
                     };
 
-                    // F: Toán (idx 5)
                     scores.math = p(row[5]);
-                    // G: Lí (idx 6)
                     scores.phys = p(row[6]);
-                    // H: Hóa (idx 7)
                     scores.chem = p(row[7]);
-                    // I: Anh (idx 8)
                     scores.eng = p(row[8]);
-                    // J: Sinh (idx 9)
                     scores.bio = p(row[9]);
 
                     if (Object.values(scores).some(v => v !== undefined)) {
@@ -536,7 +464,6 @@ const RankingView = () => {
                         count++;
                     }
                 });
-
                 alert(`Đã tải lên điểm cho Lần ${activeExamTime}: cập nhật ${count} học sinh.`);
                 return newData;
             });
@@ -545,7 +472,31 @@ const RankingView = () => {
         reader.readAsBinaryString(file);
     };
 
-    // -- Summary Logic --
+    const handleDeleteScore = () => {
+        if(confirm(`Bạn có chắc muốn đưa toàn bộ điểm Lần ${activeExamTime} về 0 không?`)) {
+            setExamData(prev => {
+                const newData = { ...prev };
+                
+                const currentData = newData[activeExamTime];
+                if (!currentData) return prev;
+
+                const resetData: Record<string, SubjectScores> = {};
+                // Loop through students in this exam set and zero them out
+                Object.keys(currentData).forEach(studentId => {
+                    resetData[studentId] = {
+                        math: 0, 
+                        phys: 0, 
+                        chem: 0, 
+                        bio: 0, 
+                        eng: 0
+                    };
+                });
+                newData[activeExamTime] = resetData;
+                return newData;
+            });
+        }
+    };
+
     const getClassStats = useMemo(() => {
         const stats: Record<string, number> = {};
         students.forEach(s => {
@@ -564,7 +515,6 @@ const RankingView = () => {
             let sum = 0;
             let count = 0;
 
-            // Loop 1 to 40
             for (let i = 1; i <= 40; i++) {
                 const record = examData[i]?.[s.id];
                 let val: number | undefined = undefined;
@@ -588,33 +538,50 @@ const RankingView = () => {
                             val = record.math + record.chem + record.bio;
                     }
                     else if (summaryTab === 'total') {
-                        let t = 0;
-                        if(record.math) t+=record.math;
-                        if(record.phys) t+=record.phys;
-                        if(record.chem) t+=record.chem;
-                        if(record.bio) t+=record.bio;
-                        if(record.eng) t+=record.eng;
-                        val = t > 0 ? t : undefined;
+                        const cls = s.class.toUpperCase();
+                        let blockSum = 0;
+                        let hasData = false;
+                        if (cls.includes('E')) {
+                             if (record.math !== undefined || record.phys !== undefined || record.eng !== undefined) {
+                                blockSum = (record.math || 0) + (record.phys || 0) + (record.eng || 0);
+                                hasData = true;
+                            }
+                        } 
+                        else if (cls.includes('B')) {
+                             if (record.math !== undefined || record.chem !== undefined || record.bio !== undefined) {
+                                blockSum = (record.math || 0) + (record.chem || 0) + (record.bio || 0);
+                                hasData = true;
+                            }
+                        }
+                        else if (cls.includes('A')) {
+                             if (record.math !== undefined || record.phys !== undefined || record.chem !== undefined) {
+                                blockSum = (record.math || 0) + (record.phys || 0) + (record.chem || 0);
+                                hasData = true;
+                            }
+                        }
+                        if (hasData) val = blockSum;
                     }
                 }
 
                 if (val !== undefined) {
                     row[`score_${i}`] = val;
-                    scores.push(val);
-                    sum += val;
-                    count++;
+                    // IGNORE 0 in calculation
+                    if (val !== 0) {
+                        scores.push(val);
+                        sum += val;
+                        count++;
+                    }
                 }
             }
 
             row.avg = count > 0 ? parseFloat((sum / count).toFixed(2)) : null;
-            row.totalVal = sum; // For sorting
+            row.totalVal = sum;
             row.lastScore = scores.length > 0 ? scores[scores.length - 1] : null;
 
             return row;
         });
     }, [students, examData, summaryTab]);
 
-    // Sorting
     const sortedData = useMemo(() => {
         if (!sortConfig) return getComputedData;
         const sorted = [...getComputedData];
@@ -622,12 +589,10 @@ const RankingView = () => {
             let va = a[sortConfig.key];
             let vb = b[sortConfig.key];
             
-            // Special handling for nulls (always at bottom)
             if (va === null || va === undefined) return 1;
             if (vb === null || vb === undefined) return -1;
 
             if (sortConfig.key === 'firstName') {
-                 // Sort by First Name then Last Name
                  if (a.firstName !== b.firstName) return a.firstName.localeCompare(b.firstName) * (sortConfig.direction === 'asc' ? 1 : -1);
                  return a.lastName.localeCompare(b.lastName) * (sortConfig.direction === 'asc' ? 1 : -1);
             }
@@ -650,9 +615,16 @@ const RankingView = () => {
          return sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
     };
 
+    const activeExamScoreList = useMemo(() => {
+        if (!students.length || !examData[activeExamTime]) return [];
+        return students.map(s => {
+            const sc = examData[activeExamTime][s.id] || {};
+            return { ...s, scores: sc };
+        }).filter(s => Object.keys(s.scores).length > 0); 
+    }, [students, examData, activeExamTime]);
+
     return (
         <div style={{ display: 'flex', height: '100%', background: '#f8fafc', overflow: 'hidden' }}>
-            {/* Sidebar Navigation */}
             <div style={{ width: '220px', background: 'white', borderRight: '1px solid #e2e8f0', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '10px' }}>Chức năng</div>
                 <button 
@@ -693,10 +665,7 @@ const RankingView = () => {
                 </button>
             </div>
 
-            {/* Main Content Area */}
             <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                
-                {/* --- STUDENT LIST VIEW --- */}
                 {subTab === 'students' && (
                     <div style={{ display: 'flex', gap: '24px', height: '100%' }}>
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
@@ -737,7 +706,6 @@ const RankingView = () => {
                             </div>
                         </div>
 
-                        {/* Class Stats Sidebar */}
                         <div style={{ width: '250px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px', height: 'fit-content' }}>
                             <h4 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <TrendingUp size={16} /> Thống kê sĩ số
@@ -762,10 +730,8 @@ const RankingView = () => {
                     </div>
                 )}
 
-                {/* --- SCORE DATA VIEW --- */}
                 {subTab === 'scores' && (
                      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                         {/* Horizontal Scrollable Tabs 1-40 */}
                          <div style={{ padding: '10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', gap: '8px' }}>
                              {Array.from({length: 40}, (_, i) => i + 1).map(num => (
                                  <button 
@@ -784,46 +750,86 @@ const RankingView = () => {
                              ))}
                          </div>
 
-                         {/* Upload & Preview Area */}
-                         <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                         <div style={{ padding: '24px', borderBottom:'1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                              <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                                  <h3 style={{ margin: '0 0 10px 0', color: '#1e293b' }}>Dữ liệu điểm - Lần {activeExamTime}</h3>
-                                 <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Tải file Excel (.xlsx) chứa sheet "DIEMKHOI". Cột B là SBD, các cột F, G, H, I, J là điểm.</p>
+                                 <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Tải file Excel (.xlsx) chứa sheet "DIEMKHOI".</p>
                              </div>
 
-                             <label style={{ 
-                                    padding: '12px 24px', background: '#22c55e', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
-                                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(34, 197, 94, 0.3)',
-                                    marginBottom: '30px'
-                                }}>
-                                    <Upload size={18} /> Tải file điểm Lần {activeExamTime}
-                                    <input type="file" accept=".xlsx,.xls,.xlsm" hidden onChange={handleScoreUpload} />
-                             </label>
-                             
-                             {/* Preview of data for this time */}
-                             {examData[activeExamTime] && Object.keys(examData[activeExamTime]).length > 0 ? (
-                                 <div style={{ width: '100%', maxWidth: '600px', background: '#f8fafc', padding: '20px', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
-                                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', color: '#059669', fontWeight: 600 }}>
-                                         <RefreshCw size={20} /> Đã có dữ liệu cho Lần {activeExamTime}
+                             <div style={{ display: 'flex', gap: '15px' }}>
+                                <label style={{ 
+                                        padding: '12px 24px', background: '#22c55e', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(34, 197, 94, 0.3)'
+                                    }}>
+                                        <Upload size={18} /> Tải file điểm
+                                        <input type="file" accept=".xlsx,.xls,.xlsm" hidden onChange={handleScoreUpload} />
+                                </label>
+                                
+                                {examData[activeExamTime] && Object.keys(examData[activeExamTime]).length > 0 && (
+                                    <button 
+                                        onClick={handleDeleteScore}
+                                        style={{ 
+                                            padding: '12px 24px', background: '#ef4444', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(239, 68, 68, 0.3)'
+                                        }}>
+                                        <Trash2 size={18} /> Xóa dữ liệu (Về 0)
+                                    </button>
+                                )}
+                             </div>
+                         </div>
+
+                         <div style={{ flex: 1, overflow: 'auto', background: '#f8fafc', padding: '24px' }}>
+                            {activeExamScoreList.length > 0 ? (
+                                <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                    <div style={{ padding: '15px', borderBottom: '1px solid #e2e8f0', fontWeight: 600, color: '#334155', background: '#f1f5f9' }}>
+                                        Chi tiết điểm Lần {activeExamTime} ({activeExamScoreList.length} học sinh)
+                                    </div>
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={{ padding: '10px', textAlign: 'left' }}>SBD</th>
+                                                    <th style={{ padding: '10px', textAlign: 'left' }}>Họ và Tên</th>
+                                                    <th style={{ padding: '10px', textAlign: 'left' }}>Lớp</th>
+                                                    <th style={{ padding: '10px', textAlign: 'center' }}>Toán</th>
+                                                    <th style={{ padding: '10px', textAlign: 'center' }}>Lí</th>
+                                                    <th style={{ padding: '10px', textAlign: 'center' }}>Hóa</th>
+                                                    <th style={{ padding: '10px', textAlign: 'center' }}>Sinh</th>
+                                                    <th style={{ padding: '10px', textAlign: 'center' }}>Anh</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {activeExamScoreList.map((s, idx) => (
+                                                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                                                        <td style={{ padding: '10px', fontWeight: 600, color: '#475569' }}>{s.id}</td>
+                                                        <td style={{ padding: '10px', fontWeight: 500 }}>{s.fullName}</td>
+                                                        <td style={{ padding: '10px' }}>{s.class}</td>
+                                                        <td style={{ padding: '10px', textAlign: 'center', color: s.scores.math !== undefined ? '#0f172a' : '#cbd5e1' }}>{s.scores.math ?? '-'}</td>
+                                                        <td style={{ padding: '10px', textAlign: 'center', color: s.scores.phys !== undefined ? '#0f172a' : '#cbd5e1' }}>{s.scores.phys ?? '-'}</td>
+                                                        <td style={{ padding: '10px', textAlign: 'center', color: s.scores.chem !== undefined ? '#0f172a' : '#cbd5e1' }}>{s.scores.chem ?? '-'}</td>
+                                                        <td style={{ padding: '10px', textAlign: 'center', color: s.scores.bio !== undefined ? '#0f172a' : '#cbd5e1' }}>{s.scores.bio ?? '-'}</td>
+                                                        <td style={{ padding: '10px', textAlign: 'center', color: s.scores.eng !== undefined ? '#0f172a' : '#cbd5e1' }}>{s.scores.eng ?? '-'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                                     <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '15px' }}>
+                                         <Database size={24} style={{ opacity: 0.3 }} />
                                      </div>
-                                     <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '13px', color: '#475569' }}>
-                                         Đã nhập điểm cho {Object.keys(examData[activeExamTime]).length} học sinh.
-                                     </div>
-                                 </div>
-                             ) : (
-                                 <div style={{ width: '100%', maxWidth: '600px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', color: '#94a3b8' }}>
-                                     Chưa có dữ liệu điểm cho lần này.
-                                 </div>
-                             )}
+                                     <p>Chưa có dữ liệu điểm cho Lần {activeExamTime}</p>
+                                </div>
+                            )}
                          </div>
                      </div>
                 )}
 
-                {/* --- SUMMARY VIEW --- */}
                 {subTab === 'summary' && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                         
-                        {/* Subject Tabs */}
                         <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap' }}>
                              {[
                                  {id: 'math', label: 'Toán'},
@@ -831,9 +837,9 @@ const RankingView = () => {
                                  {id: 'chem', label: 'Hóa'},
                                  {id: 'eng', label: 'Anh'},
                                  {id: 'bio', label: 'Sinh'},
-                                 {id: 'A', label: 'Khối A (T-L-H)'},
-                                 {id: 'A1', label: 'Khối A1 (T-L-A)'},
-                                 {id: 'B', label: 'Khối B (T-H-S)'},
+                                 {id: 'A', label: 'Khối A'},
+                                 {id: 'A1', label: 'Khối A1'},
+                                 {id: 'B', label: 'Khối B'},
                                  {id: 'total', label: 'Tổng Khối'},
                              ].map(tab => (
                                  <button 
@@ -864,7 +870,6 @@ const RankingView = () => {
                              </div>
                         </div>
 
-                        {/* Table */}
                         <div style={{ flex: 1, overflow: 'auto' }}>
                             <table id="summary-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1200px' }}>
                                 <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
@@ -879,7 +884,6 @@ const RankingView = () => {
                                         <th onClick={() => handleSort('class')} style={{ padding: '10px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', cursor: 'pointer', width: '80px' }}>
                                             <div style={{display:'flex', alignItems:'center', gap:'4px', justifyContent: 'center'}}>Lớp {renderSortIcon('class')}</div>
                                         </th>
-                                        {/* Dynamic Columns for Exams */}
                                         {Array.from({length: 40}, (_, i) => i + 1).map(num => (
                                             <th key={num} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '50px', fontSize: '11px', color: '#64748b' }}>
                                                 L{num}
@@ -934,26 +938,18 @@ const RankingView = () => {
 // --- Main App Component ---
 
 const App = () => {
-  // Allow 'ranking' string as a valid subject mode
   const [activeSubject, setActiveSubject] = useState<string>('math');
   const [activeTab, setActiveTab] = useState<'stats' | 'create'>('stats');
   
-  // Data State
   const [data, setData] = useState<any[] | null>(null);
   const [processedResults, setProcessedResults] = useState<StudentResult[] | null>(null);
   const [stats, setStats] = useState<QuestionStat[] | null>(null);
   const [fileName, setFileName] = useState<string>("");
 
-  // Stats Filter
   const [statsPartFilter, setStatsPartFilter] = useState<'all' | 'p1' | 'p2' | 'p3'>('all');
-
-  // Question Generation Counts
   const [questionCounts, setQuestionCounts] = useState<Record<number, number>>({});
-
-  // Sorting State
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
-  // Settings & Thresholds
   const [thresholds, setThresholds] = useState<ThresholdConfig>(() => {
     const saved = localStorage.getItem('thresholds');
     return saved ? JSON.parse(saved) : { lowCount: 5, highPercent: 40 };
@@ -964,12 +960,10 @@ const App = () => {
     return saved ? JSON.parse(saved) : { lowError: DEFAULT_COLORS.yellow, highError: DEFAULT_COLORS.red };
   });
 
-  // Exam Creation State
   const [examFile, setExamFile] = useState<DocFile | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedExam, setGeneratedExam] = useState<string>("");
 
-  // Settings UI
   const [showSettings, setShowSettings] = useState(false);
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [showKey, setShowKey] = useState(false);
@@ -986,7 +980,6 @@ const App = () => {
     localStorage.setItem('customColors', JSON.stringify(customColors));
   }, [customColors]);
 
-  // Handle File Upload (Excel/CSV)
   const handleDataUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1008,7 +1001,6 @@ const App = () => {
     };
 
     if (file.name.toLowerCase().endsWith('.csv')) {
-        // Read as Text with UTF-8 to fix font issues in CSV
         reader.onload = (evt) => {
             const text = evt.target?.result as string;
             const wb = XLSX.read(text, { type: 'string' });
@@ -1024,7 +1016,6 @@ const App = () => {
         }
         reader.readAsText(file, 'UTF-8');
     } else {
-        // Excel files
         reader.onload = (evt) => {
             const bstr = evt.target?.result;
             if (bstr) processBinary(bstr);
@@ -1032,20 +1023,18 @@ const App = () => {
         reader.readAsBinaryString(file);
     }
     
-    e.target.value = ''; // Reset
+    e.target.value = ''; 
   };
 
-  // Re-process when subject changes (only if it's a valid subject type)
   useEffect(() => {
     if (data && activeSubject !== 'ranking') {
       const { results, stats: newStats } = processData(data, activeSubject as any);
       setProcessedResults(results);
       setStats(newStats);
-      setQuestionCounts({}); // Reset counts when subject changes
+      setQuestionCounts({});
     }
   }, [activeSubject]);
 
-  // Handle Sort
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -1054,7 +1043,6 @@ const App = () => {
     setSortConfig({ key, direction });
   };
 
-  // Get Sorted Data
   const sortedResults = useMemo(() => {
     if (!processedResults) return [];
     if (!sortConfig) return processedResults;
@@ -1064,9 +1052,8 @@ const App = () => {
       let aVal: any = '';
       let bVal: any = '';
 
-      // Determine values based on key
       if (sortConfig.key === 'name') {
-        aVal = a.firstName; // Sort by FirstName mostly for VN names
+        aVal = a.firstName; 
         bVal = b.firstName;
       } else if (sortConfig.key === 'sbd') {
         aVal = a.sbd;
@@ -1092,7 +1079,6 @@ const App = () => {
     return sorted;
   }, [processedResults, sortConfig]);
 
-  // Calculate General Stats
   const summaryStats = useMemo(() => {
     if (!processedResults || processedResults.length === 0) return { min: 0, max: 0, avg: 0 };
     const scores = processedResults.map(r => r.scores.total);
@@ -1103,30 +1089,19 @@ const App = () => {
     return { min, max, avg };
   }, [processedResults]);
 
-  // Filter Wrong Stats based on user selection
   const filteredWrongStats = useMemo(() => {
       if (!stats) return [];
       const config = SUBJECTS_CONFIG[activeSubject];
-      // Safety check if we are in ranking mode but trying to filter stats (shouldn't happen)
       if (!config) return [];
 
       return stats.filter(s => {
-          // Check percentage threshold first
           if (s.wrongPercent < thresholds.highPercent) return false;
-
-          // Check Part Filter
           if (statsPartFilter === 'all') return true;
           
           const idx = s.index;
-          if (statsPartFilter === 'p1') {
-              return idx >= config.parts.p1.start && idx <= config.parts.p1.end;
-          }
-          if (statsPartFilter === 'p2') {
-              return idx >= config.parts.p2.start && idx <= config.parts.p2.end;
-          }
-          if (statsPartFilter === 'p3') {
-              return idx >= config.parts.p3.start && idx <= config.parts.p3.end;
-          }
+          if (statsPartFilter === 'p1') return idx >= config.parts.p1.start && idx <= config.parts.p1.end;
+          if (statsPartFilter === 'p2') return idx >= config.parts.p2.start && idx <= config.parts.p2.end;
+          if (statsPartFilter === 'p3') return idx >= config.parts.p3.start && idx <= config.parts.p3.end;
           return false;
       }).sort((a,b) => b.wrongCount - a.wrongCount);
   }, [stats, statsPartFilter, thresholds.highPercent, activeSubject]);
@@ -1135,7 +1110,6 @@ const App = () => {
       setQuestionCounts(prev => ({ ...prev, [index]: val }));
   };
 
-  // Handle Exam File Upload
   const handleExamFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1163,10 +1137,9 @@ const App = () => {
       const apiKey = userApiKey || process.env.API_KEY || '';
       const ai = new GoogleGenAI({ apiKey: apiKey });
       
-      // Construct specific request about question counts
       const requestDetails = filteredWrongStats.map(s => {
           const label = getPart2Label(s.index, activeSubject);
-          const count = questionCounts[s.index] || 5; // Default to 5
+          const count = questionCounts[s.index] || 5; 
           return `- Dạng bài câu ${label}: tạo ${count} câu.`;
       }).join('\n');
       
@@ -1225,18 +1198,17 @@ const App = () => {
     }
   };
 
-  // Render Stats Cell Color
   const getCellColor = (wrongCount: number, wrongPercent: number) => {
-    if (wrongCount === 0) return DEFAULT_COLORS.blue; // Blue (Correct)
-    if (wrongPercent > thresholds.highPercent) return customColors.highError; // Configurable Red
-    if (wrongCount < thresholds.lowCount) return customColors.lowError; // Configurable Yellow
+    if (wrongCount === 0) return DEFAULT_COLORS.blue; 
+    if (wrongPercent > thresholds.highPercent) return customColors.highError; 
+    if (wrongCount < thresholds.lowCount) return customColors.lowError; 
     return 'white';
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 8) return '#16a34a'; // Green
-    if (score >= 5) return '#ca8a04'; // Yellow
-    return '#dc2626'; // Red
+    if (score >= 8) return '#16a34a'; 
+    if (score >= 5) return '#ca8a04'; 
+    return '#dc2626'; 
   };
 
   const renderSortIcon = (key: string) => {
@@ -1244,14 +1216,10 @@ const App = () => {
     return sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
 
-  // --- UI RENDER ---
-
-  // Settings Overlay
   if (showSettings) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
          <div style={{ background: 'white', borderRadius: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)', width: '600px', overflow: 'hidden' }}>
-             {/* ... Same Settings UI ... */}
              <div style={{ background: '#1e3a8a', padding: '20px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                  <h2 style={{ margin: 0, color: 'white', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <Settings size={20} /> Cài đặt hệ thống
@@ -1263,7 +1231,6 @@ const App = () => {
 
              <div style={{ padding: '30px', maxHeight: '70vh', overflowY: 'auto' }}>
                  
-                 {/* Author Info */}
                  <div style={{ marginBottom: '30px', background: '#eff6ff', padding: '20px', borderRadius: '16px', display: 'flex', gap: '20px', alignItems: 'center' }}>
                      <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#3b82f6', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 'bold' }}>H</div>
                      <div>
@@ -1277,7 +1244,6 @@ const App = () => {
                      </div>
                  </div>
 
-                 {/* Threshold Configuration */}
                  <div style={{ marginBottom: '30px' }}>
                     <h4 style={{ margin: '0 0 15px 0', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
                          <Filter size={16} /> Cấu hình hiển thị thống kê
@@ -1352,7 +1318,6 @@ const App = () => {
                     </div>
                  </div>
 
-                 {/* API Key */}
                  <div>
                      <label style={{ display: 'block', marginBottom: '10px', fontWeight: 600, color: '#334155', fontSize: '15px' }}>
                          Google Gemini API Key
@@ -1386,7 +1351,6 @@ const App = () => {
 
              </div>
 
-             {/* Footer */}
              <div style={{ padding: '20px 30px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
                  <button 
                     onClick={() => setShowSettings(false)} 
@@ -1407,7 +1371,6 @@ const App = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#f8fafc' }}>
       
-      {/* --- HEADER --- */}
       <header style={{ height: '64px', background: '#1e3a8a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', color: 'white', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontWeight: 700, fontSize: '18px' }}>
               <div style={{ width: '36px', height: '36px', background: 'white', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1e3a8a' }}>
@@ -1427,7 +1390,6 @@ const App = () => {
           </button>
       </header>
 
-      {/* --- SUBJECT NAVIGATION BAR --- */}
       <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '12px 24px', display: 'flex', gap: '10px', overflowX: 'auto' }}>
           {Object.values(SUBJECTS_CONFIG).map(subj => {
               const isActive = activeSubject === subj.id;
@@ -1437,7 +1399,7 @@ const App = () => {
                   onClick={() => setActiveSubject(subj.type)}
                   style={{
                       display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', 
-                      borderRadius: '99px', // Pill shape
+                      borderRadius: '99px', 
                       border: 'none', cursor: 'pointer', 
                       background: isActive ? '#1e3a8a' : '#f1f5f9',
                       color: isActive ? 'white' : '#64748b',
@@ -1457,12 +1419,11 @@ const App = () => {
               );
           })}
           
-          {/* Add "Tổng kết và Xếp hạng" as a pseudo-subject item */}
           <button
             onClick={() => setActiveSubject('ranking')}
             style={{
                 display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', 
-                borderRadius: '99px', // Pill shape
+                borderRadius: '99px',
                 border: 'none', cursor: 'pointer', 
                 background: activeSubject === 'ranking' ? '#1e3a8a' : '#f1f5f9',
                 color: activeSubject === 'ranking' ? 'white' : '#64748b',
@@ -1477,10 +1438,8 @@ const App = () => {
           </button>
       </div>
 
-      {/* --- MAIN CONTENT --- */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           
-          {/* Sub-Header / Toolbar (Hide if in Ranking mode) */}
           {activeSubject !== 'ranking' && (
               <div style={{ padding: '15px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -1506,7 +1465,6 @@ const App = () => {
                         }}>
                         <BrainCircuit size={16} /> Phân tích AI
                       </button>
-                      {/* Removed Ranking button from here */}
                   </div>
 
                   {activeTab === 'stats' && (
@@ -1541,17 +1499,14 @@ const App = () => {
               </div>
           )}
 
-          {/* Workspace */}
           <div style={{ flex: 1, overflow: 'auto', padding: activeSubject === 'ranking' ? 0 : '0 24px 24px 24px' }}>
              
                 {activeSubject === 'ranking' ? (
                     <RankingView />
                 ) : (
                     <>
-                    {/* ... Existing Stats/Create Views ... */}
                     {activeTab === 'stats' && (
                         <div style={{ animation: 'fadeIn 0.3s ease-out', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                            {/* Empty State / Upload */}
                             {!stats && (
                                <div style={{ 
                                     padding: '60px', background: 'white', borderRadius: '16px', border: '2px dashed #cbd5e1', 
@@ -1559,7 +1514,7 @@ const App = () => {
                                 }}
                                 onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#3b82f6'; }}
                                 onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
-                                onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; /* Handle drop */ }}
+                                onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
                                 >
                                     <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="data-upload" />
                                     <label htmlFor="data-upload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
@@ -1578,10 +1533,8 @@ const App = () => {
 
                             {processedResults && stats && (
                                 <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', height: '100%', border: '1px solid #e2e8f0' }}>
-                                    {/* ... Stats Table Implementation ... */}
                                     <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' }}>
                                         <div style={{ display: 'flex', gap: '24px', fontSize: '13px', fontWeight: 500, alignItems: 'center' }}>
-                                            {/* Legend */}
                                             <div style={{ display: 'flex', gap: '15px', borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
                                                 <div style={{ 
                                                     display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
@@ -1619,7 +1572,6 @@ const App = () => {
                                     <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
                                         <table id="stats-table" style={{ width: '100%', fontSize: '12px', borderCollapse: 'separate', borderSpacing: 0, minWidth: '1500px' }}>
                                             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                                                {/* Header Rows */}
                                                 <tr style={{ background: '#f1f5f9' }}>
                                                     <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', width: '40px' }}>STT</th>
                                                     <th onClick={() => handleSort('sbd')} style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
@@ -1645,7 +1597,6 @@ const App = () => {
                                                     })}
                                                 </tr>
                                                 
-                                                {/* Row 2: Correct Keys */}
                                                 <tr style={{ background: '#e2e8f0' }}>
                                                     <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
                                                     <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
@@ -1665,7 +1616,6 @@ const App = () => {
                                                     })}
                                                 </tr>
 
-                                                {/* Row 3: Stats */}
                                                 <tr style={{ background: '#f8fafc' }}>
                                                     <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
                                                     <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
@@ -1739,15 +1689,12 @@ const App = () => {
 
                     {activeTab === 'create' && (
                         <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto', height: '100%' }}>
-                            {/* ... Create Exam View Logic Same as Before ... */}
-                            {/* Control Panel */}
                         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                             <div style={{ background: 'white', padding: '20px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%' }}>
                                 <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                                     <BookOpen size={18} /> Cấu hình tạo đề
                                 </h3>
                                 
-                                {/* File Upload */}
                                 <div style={{ 
                                     padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', 
                                     textAlign: 'center', marginBottom: '15px', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0
@@ -1772,7 +1719,6 @@ const App = () => {
                                             <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
                                                 Các câu sai nhiều (&gt;{thresholds.highPercent}%):
                                             </div>
-                                            {/* Styled Filter Dropdown */}
                                             <select 
                                                 value={statsPartFilter} 
                                                 onChange={(e) => setStatsPartFilter(e.target.value as any)}
@@ -1851,7 +1797,6 @@ const App = () => {
                             </div>
                         </div>
 
-                        {/* Result View */}
                         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                             <div style={{ flex: 1, background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                                 <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1888,12 +1833,9 @@ const App = () => {
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        /* Custom scrollbar for main area */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        
         table th, table td { vertical-align: middle; }
       `}</style>
     </div>
