@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -42,7 +42,7 @@ interface DocFile {
 interface SubjectConfig {
   id: string;
   name: string;
-  type: 'math' | 'science' | 'english';
+  type: 'math' | 'science' | 'english' | 'it' | 'history';
   totalQuestions: number;
   parts: {
     p1: { start: number; end: number; scorePerQ: number };
@@ -94,6 +94,30 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     parts: {
       p1: { start: 1, end: 40, scorePerQ: 0.25 },
       p2: { start: 0, end: 0, scorePerGroup: 0 },
+      p3: { start: 0, end: 0, scorePerQ: 0 },
+    }
+  },
+  it: {
+    id: 'it',
+    name: 'Tin học',
+    type: 'it',
+    // 28 MC + 3 TF questions (each TF has 4 sub-parts => 12 items). Total columns = 40.
+    totalQuestions: 40, 
+    parts: {
+      p1: { start: 1, end: 28, scorePerQ: 0.25 },
+      p2: { start: 29, end: 40, scorePerGroup: 1.0 }, // 3 groups of 4 items
+      p3: { start: 0, end: 0, scorePerQ: 0 },
+    }
+  },
+  history: {
+    id: 'history',
+    name: 'Lịch sử',
+    type: 'history',
+    // 24 MC + 4 TF questions (each TF has 4 sub-parts => 16 items). Total columns = 40.
+    totalQuestions: 40,
+    parts: {
+      p1: { start: 1, end: 24, scorePerQ: 0.25 },
+      p2: { start: 25, end: 40, scorePerGroup: 1.0 }, // 4 groups of 4 items
       p3: { start: 0, end: 0, scorePerQ: 0 },
     }
   }
@@ -208,33 +232,28 @@ const exportExamToWord = (content: string, fileName: string) => {
 
 // --- Scoring Engine ---
 
-const processData = (data: any[], subjectType: 'math' | 'science' | 'english') => {
+const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 'it' | 'history') => {
   const config = SUBJECTS_CONFIG[subjectType];
   
   const results: StudentResult[] = [];
   const questionStats: Record<number, number> = {}; // Index -> Wrong Count
-  const correctKeys: Record<number, string> = {}; // Index -> Correct Key
+  const correctKeysForDisplay: Record<number, string> = {}; // Index -> Correct Key (First found found, mainly for display)
+
+  // Store keys by Version to support multiple exam codes
+  const keysByVersion: Record<string, Record<number, string>> = {};
 
   // Initialize stats
   for (let i = 1; i <= config.totalQuestions; i++) {
     questionStats[i] = 0;
-    correctKeys[i] = ''; 
-  }
-
-  // First pass to find correct keys (assuming keys are consistent in ZipGrade CSV or at least present in first row)
-  if (data.length > 0) {
-    const firstRow = data[0];
-    for (let i = 1; i <= config.totalQuestions; i++) {
-       const keyCol = `PriKey${i}`;
-       if (firstRow[keyCol]) {
-         correctKeys[i] = String(firstRow[keyCol]).trim().toUpperCase();
-       }
-    }
+    correctKeysForDisplay[i] = ''; 
   }
 
   data.forEach(row => {
     // Basic validation to ensure it's a student row (has StudentID or Name)
     if (!row['StudentID'] && !row['LastName'] && !row['FirstName']) return;
+
+    // Determine Key Version / Exam Code
+    const version = String(row['Key Version'] || row['Exam Code'] || 'default').trim();
 
     let p1Score = 0;
     let p2Score = 0;
@@ -249,11 +268,24 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
       const keyCol = `PriKey${idx}`;
       
       const stAns = String(row[stCol] || '').trim().toUpperCase();
-      // Use pre-fetched key or fallback to row key
-      const keyAns = correctKeys[idx] || String(row[keyCol] || '').trim().toUpperCase();
       
-      // Update global key map if missing
-      if (!correctKeys[idx] && keyAns) correctKeys[idx] = keyAns;
+      // LOGIC:
+      // 1. Try to get key from this specific row (PriKeyX) - this handles multiple versions automatically in ZipGrade
+      // 2. Fallback to cached key for this version if row data is missing
+      let keyAns = String(row[keyCol] || '').trim().toUpperCase();
+
+      if (!keyAns && keysByVersion[version] && keysByVersion[version][idx]) {
+          keyAns = keysByVersion[version][idx];
+      }
+
+      // Cache the key for this version if found
+      if (keyAns) {
+          if (!keysByVersion[version]) keysByVersion[version] = {};
+          keysByVersion[version][idx] = keyAns;
+
+          // Update display key (using the first one encountered or overwriting is fine for simple stats)
+          if (!correctKeysForDisplay[idx]) correctKeysForDisplay[idx] = keyAns;
+      }
 
       rawAnswers[idx] = stAns;
       
@@ -319,10 +351,6 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
     const totalScore = Math.round((p1Score + p2Score + p3Score) * 100) / 100;
 
     // Handle Name Order (Swapped based on user request "FirstName + LastName")
-    // If input is "Anh" (First) "Đặng Thùy" (Last), we want "Đặng Thùy Anh" (Last First)
-    // Wait, the user said they see "Anh Đặng Thùy" and want "Đặng Thùy Anh".
-    // If code was Last+First, and result was "Anh Đặng Thùy", then Last="Anh", First="Đặng Thùy".
-    // To get "Đặng Thùy Anh", we need First+Last.
     const fName = String(row['FirstName'] || '').trim();
     const lName = String(row['LastName'] || '').trim();
     const fullName = `${fName} ${lName}`.trim(); 
@@ -332,7 +360,7 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
       firstName: fName,
       lastName: lName,
       name: fullName,
-      code: String(row['Key Version'] || row['Exam Code'] || '---'),
+      code: version,
       rawAnswers,
       scores: {
         total: totalScore,
@@ -347,12 +375,16 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
   // Calculate percentages
   const stats: QuestionStat[] = [];
   const totalStudents = results.length;
+  // If multiple versions exist, showing a single "Correct Key" in the header is ambiguous.
+  // We will show the key from the first version encountered, or indicate mixed.
+  const isMultiVersion = Object.keys(keysByVersion).length > 1;
+
   for (let i = 1; i <= config.totalQuestions; i++) {
     stats.push({
       index: i,
       wrongCount: questionStats[i],
       wrongPercent: totalStudents > 0 ? parseFloat(((questionStats[i] / totalStudents) * 100).toFixed(1)) : 0,
-      correctKey: correctKeys[i] || '-'
+      correctKey: isMultiVersion ? '*' : (correctKeysForDisplay[i] || '-')
     });
   }
 
@@ -363,7 +395,7 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english') =
 // --- Main App Component ---
 
 const App = () => {
-  const [activeSubject, setActiveSubject] = useState<'math' | 'science' | 'english'>('math');
+  const [activeSubject, setActiveSubject] = useState<'math' | 'science' | 'english' | 'it' | 'history'>('math');
   const [activeTab, setActiveTab] = useState<'stats' | 'create'>('stats');
   
   // Data State
@@ -877,6 +909,8 @@ const App = () => {
                   {subj.id === 'math' && <Calculator size={18} />}
                   {subj.id === 'science' && <FlaskConical size={18} />}
                   {subj.id === 'english' && <Languages size={18} />}
+                  {subj.id === 'it' && <Monitor size={18} />}
+                  {subj.id === 'history' && <Hourglass size={18} />}
                   <span>{subj.name}</span>
                 </button>
               );
