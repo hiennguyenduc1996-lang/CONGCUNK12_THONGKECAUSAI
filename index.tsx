@@ -125,156 +125,160 @@ const processZipGradeFile = (file: File, config: GradingConfig): Promise<Grading
         reader.readAsText(file, 'UTF-8');
         
         reader.onload = (evt) => {
-            const text = evt.target?.result;
-            // Parse the string data
-            const wb = XLSX.read(text, { type: 'string' });
-            const ws = wb.Sheets[wb.SheetNames[0]];
-            const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-            
-            if (data.length < 2) {
-                resolve([]);
-                return;
-            }
-
-            const headers = data[0].map((h: any) => String(h || '').trim());
-            
-            // Map Headers to Indices
-            const mapIdx = (keys: string[]) => headers.findIndex(h => keys.some(k => h.toUpperCase() === k.toUpperCase()));
-            
-            const idxSBD = mapIdx(['Student ID', 'External ID', 'SBD', 'StudentID']);
-            const idxFirstName = mapIdx(['First Name', 'FirstName']);
-            const idxLastName = mapIdx(['Last Name', 'LastName']);
-            const idxClass = mapIdx(['Class', 'Lớp']);
-            const idxCode = mapIdx(['Key Version', 'Exam Code', 'Mã đề']);
-
-            // Find Answer Columns (Stu1, PriKey1...)
-            const getColIdx = (prefix: string, num: number) => headers.indexOf(`${prefix}${num}`);
-
-            const processed: GradingRow[] = [];
-            
-            // Iterate rows (skip header)
-            for (let r = 1; r < data.length; r++) {
-                const row = data[r];
-                if (!row || row.length === 0) continue;
-
-                // 1. Extract Student Info
-                const sbd = idxSBD > -1 ? String(row[idxSBD] || '') : String(row[0] || ''); 
+            try {
+                const text = evt.target?.result;
+                // Parse the string data
+                const wb = XLSX.read(text, { type: 'string' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
                 
-                // Fallback for Class: User requested Column B (Index 1) if not found
-                let className = '';
-                if (idxClass > -1) className = String(row[idxClass] || '');
-                else if (row[1]) className = String(row[1] || '');
-                
-                // Format Class Name (1200 -> 12E2, etc.)
-                className = formatClassName(className);
-
-                // --- NAME FIX: SWAP COLUMNS ---
-                // User data often has Last Name in "First Name" col and First Name in "Last Name" col for sorting.
-                // We extract them normally first.
-                const rawFirstNameCol = idxFirstName > -1 ? String(row[idxFirstName] || '').trim() : '';
-                const rawLastNameCol = idxLastName > -1 ? String(row[idxLastName] || '').trim() : '';
-
-                // Then swap assignment to match Vietnamese semantics:
-                // fName (Tên) <= rawLastNameCol
-                // lName (Họ) <= rawFirstNameCol
-                const fName = rawLastNameCol; 
-                const lName = rawFirstNameCol;
-                
-                // Name Fix: Last Name + First Name + formatting
-                const fullName = formatFullName(lName, fName);
-
-                const code = idxCode > -1 ? String(row[idxCode] || '') : '';
-
-                if (!sbd && !fullName) continue;
-
-                // 2. Scoring
-                let p1 = 0; let p2 = 0; let p3 = 0;
-                const ansMap: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }> = {};
-
-                const getCellVal = (prefix: string, qNum: number) => {
-                    const cIdx = getColIdx(prefix, qNum);
-                    if (cIdx === -1) return '';
-                    return String(row[cIdx] || '').trim().toUpperCase();
-                };
-
-                const isIgnored = (q: number) => {
-                    if (!config.ignore) return false;
-                    return config.ignore.some(([s, e]) => q >= s && q <= e);
-                };
-
-                // Logic P1
-                if (config.p1) {
-                    for (let i = config.p1.start; i <= config.p1.end; i++) {
-                        const stu = getCellVal('Stu', i);
-                        const key = getCellVal('PriKey', i);
-                        const correct = (stu === key && key !== '');
-                        const ignored = isIgnored(i);
-                        
-                        if (!ignored && correct) p1 += config.p1.val;
-                        ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
-                    }
+                if (data.length < 2) {
+                    resolve([]);
+                    return;
                 }
 
-                // Logic P2 (Groups)
-                if (config.p2 && config.p2.ranges) {
-                    config.p2.ranges.forEach(([start, end]) => {
-                        let correctCount = 0;
-                        const groupSize = end - start + 1;
-                        for (let k = 0; k < groupSize; k++) {
-                            const qIdx = start + k;
-                            const stu = getCellVal('Stu', qIdx);
-                            const key = getCellVal('PriKey', qIdx);
+                const headers = data[0].map((h: any) => String(h || '').trim());
+                
+                // Map Headers to Indices
+                const mapIdx = (keys: string[]) => headers.findIndex(h => keys.some(k => h.toUpperCase() === k.toUpperCase()));
+                
+                const idxSBD = mapIdx(['Student ID', 'External ID', 'SBD', 'StudentID']);
+                const idxFirstName = mapIdx(['First Name', 'FirstName']);
+                const idxLastName = mapIdx(['Last Name', 'LastName']);
+                const idxClass = mapIdx(['Class', 'Lớp']);
+                const idxCode = mapIdx(['Key Version', 'Exam Code', 'Mã đề']);
+
+                // Find Answer Columns (Stu1, PriKey1...)
+                const getColIdx = (prefix: string, num: number) => headers.indexOf(`${prefix}${num}`);
+
+                const processed: GradingRow[] = [];
+                
+                // Iterate rows (skip header)
+                for (let r = 1; r < data.length; r++) {
+                    const row = data[r];
+                    if (!row || row.length === 0) continue;
+
+                    // 1. Extract Student Info
+                    const sbd = idxSBD > -1 ? String(row[idxSBD] || '') : String(row[0] || ''); 
+                    
+                    // Fallback for Class: User requested Column B (Index 1) if not found
+                    let className = '';
+                    if (idxClass > -1) className = String(row[idxClass] || '');
+                    else if (row[1]) className = String(row[1] || '');
+                    
+                    // Format Class Name (1200 -> 12E2, etc.)
+                    className = formatClassName(className);
+
+                    // --- NAME FIX: SWAP COLUMNS ---
+                    // User data often has Last Name in "First Name" col and First Name in "Last Name" col for sorting.
+                    // We extract them normally first.
+                    const rawFirstNameCol = idxFirstName > -1 ? String(row[idxFirstName] || '').trim() : '';
+                    const rawLastNameCol = idxLastName > -1 ? String(row[idxLastName] || '').trim() : '';
+
+                    // Then swap assignment to match Vietnamese semantics:
+                    // fName (Tên) <= rawLastNameCol
+                    // lName (Họ) <= rawFirstNameCol
+                    const fName = rawLastNameCol; 
+                    const lName = rawFirstNameCol;
+                    
+                    // Name Fix: Last Name + First Name + formatting
+                    const fullName = formatFullName(lName, fName);
+
+                    const code = idxCode > -1 ? String(row[idxCode] || '') : '';
+
+                    if (!sbd && !fullName) continue;
+
+                    // 2. Scoring
+                    let p1 = 0; let p2 = 0; let p3 = 0;
+                    const ansMap: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }> = {};
+
+                    const getCellVal = (prefix: string, qNum: number) => {
+                        const cIdx = getColIdx(prefix, qNum);
+                        if (cIdx === -1) return '';
+                        return String(row[cIdx] || '').trim().toUpperCase();
+                    };
+
+                    const isIgnored = (q: number) => {
+                        if (!config.ignore) return false;
+                        return config.ignore.some(([s, e]) => q >= s && q <= e);
+                    };
+
+                    // Logic P1
+                    if (config.p1) {
+                        for (let i = config.p1.start; i <= config.p1.end; i++) {
+                            const stu = getCellVal('Stu', i);
+                            const key = getCellVal('PriKey', i);
                             const correct = (stu === key && key !== '');
-                            if (correct) correctCount++;
-                            ansMap[qIdx] = { val: stu, isCorrect: correct, isIgnored: false };
+                            const ignored = isIgnored(i);
+                            
+                            if (!ignored && correct) p1 += config.p1.val;
+                            ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
                         }
-                        p2 += calculateGroupScore(correctCount);
+                    }
+
+                    // Logic P2 (Groups)
+                    if (config.p2 && config.p2.ranges) {
+                        config.p2.ranges.forEach(([start, end]) => {
+                            let correctCount = 0;
+                            const groupSize = end - start + 1;
+                            for (let k = 0; k < groupSize; k++) {
+                                const qIdx = start + k;
+                                const stu = getCellVal('Stu', qIdx);
+                                const key = getCellVal('PriKey', qIdx);
+                                const correct = (stu === key && key !== '');
+                                if (correct) correctCount++;
+                                ansMap[qIdx] = { val: stu, isCorrect: correct, isIgnored: false };
+                            }
+                            p2 += calculateGroupScore(correctCount);
+                        });
+                    }
+
+                    // Logic P3
+                    if (config.p3) {
+                        for (let i = config.p3.start; i <= config.p3.end; i++) {
+                            const stu = getCellVal('Stu', i);
+                            const key = getCellVal('PriKey', i);
+                            const correct = (stu === key && key !== '');
+                            const ignored = isIgnored(i);
+                            
+                            if (!ignored && correct) p3 += config.p3.val;
+                            ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
+                        }
+                    }
+
+                    // Handle completely ignored ranges
+                    for(let i=1; i <= config.totalQuestions; i++) {
+                        if (!ansMap[i]) {
+                            const stu = getCellVal('Stu', i);
+                            ansMap[i] = { val: stu, isCorrect: false, isIgnored: true };
+                        }
+                    }
+
+                    // Rounding
+                    p1 = Math.round(p1 * 100) / 100;
+                    p2 = Math.round(p2 * 100) / 100;
+                    p3 = Math.round(p3 * 100) / 100;
+                    const total = Math.round((p1 + p2 + p3) * 100) / 100;
+
+                    processed.push({
+                        stt: processed.length + 1,
+                        sbd,
+                        fullName,
+                        firstName: fName,
+                        lastName: lName,
+                        class: className,
+                        examCode: code,
+                        totalScore: total,
+                        p1Score: p1,
+                        p2Score: p2,
+                        p3Score: p3,
+                        answers: ansMap
                     });
                 }
-
-                // Logic P3
-                if (config.p3) {
-                     for (let i = config.p3.start; i <= config.p3.end; i++) {
-                        const stu = getCellVal('Stu', i);
-                        const key = getCellVal('PriKey', i);
-                        const correct = (stu === key && key !== '');
-                        const ignored = isIgnored(i);
-                        
-                        if (!ignored && correct) p3 += config.p3.val;
-                        ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
-                    }
-                }
-
-                // Handle completely ignored ranges
-                for(let i=1; i <= config.totalQuestions; i++) {
-                    if (!ansMap[i]) {
-                         const stu = getCellVal('Stu', i);
-                         ansMap[i] = { val: stu, isCorrect: false, isIgnored: true };
-                    }
-                }
-
-                // Rounding
-                p1 = Math.round(p1 * 100) / 100;
-                p2 = Math.round(p2 * 100) / 100;
-                p3 = Math.round(p3 * 100) / 100;
-                const total = Math.round((p1 + p2 + p3) * 100) / 100;
-
-                processed.push({
-                    stt: processed.length + 1,
-                    sbd,
-                    fullName,
-                    firstName: fName,
-                    lastName: lName,
-                    class: className,
-                    examCode: code,
-                    totalScore: total,
-                    p1Score: p1,
-                    p2Score: p2,
-                    p3Score: p3,
-                    answers: ansMap
-                });
+                resolve(processed);
+            } catch (err) {
+                reject(err);
             }
-            resolve(processed);
         };
         reader.onerror = reject;
     });
@@ -631,7 +635,8 @@ const RankingView = () => {
             return;
         }
         
-        if (!validateScriptUrl(scriptUrl)) {
+        let targetUrl = scriptUrl.trim();
+        if (!validateScriptUrl(targetUrl)) {
              setSyncMessage("URL không hợp lệ. URL phải kết thúc bằng '/exec' (Không phải '/edit')");
              setSyncStatus("error");
              return;
@@ -650,7 +655,7 @@ const RankingView = () => {
             // if Content-Type is 'application/json'. 
             // We MUST use 'text/plain' or 'application/x-www-form-urlencoded' to skip preflight.
             // The Headers configuration below ensures the browser treats this as a "Simple Request".
-            await fetch(scriptUrl, {
+            await fetch(targetUrl, {
                 method: "POST",
                 headers: {
                     "Content-Type": "text/plain;charset=utf-8",
@@ -674,7 +679,8 @@ const RankingView = () => {
             return;
         }
 
-        if (!validateScriptUrl(scriptUrl)) {
+        let targetUrl = scriptUrl.trim();
+        if (!validateScriptUrl(targetUrl)) {
              setSyncMessage("URL không hợp lệ. URL phải kết thúc bằng '/exec' (Không phải '/edit')");
              setSyncStatus("error");
              return;
@@ -684,57 +690,89 @@ const RankingView = () => {
         setSyncMessage("Đang tải dữ liệu từ Google Sheet...");
 
         try {
-            const response = await fetch(scriptUrl);
+            const response = await fetch(targetUrl);
             if (!response.ok) {
                 throw new Error("Network response was not ok");
             }
             
-            // Safely parse JSON. If the user pasted a wrong link (like to the sheet itself), 
-            // the response will be HTML and response.json() will crash the app without a try-catch.
             const text = await response.text();
-            let data;
+            let data: any;
             try {
                 data = JSON.parse(text);
             } catch (e) {
                 console.error("Failed to parse JSON", text.substring(0, 100));
-                throw new Error("Dữ liệu trả về không phải JSON. Có thể URL sai.");
+                throw new Error("Dữ liệu trả về không phải JSON. Có thể URL sai hoặc quyền truy cập chưa mở.");
             }
             
-            if (data.students) setStudents(data.students);
-            if (data.examData) setExamData(data.examData);
+            // STRICT VALIDATION TO PREVENT CRASH
+            if (data && typeof data === 'object') {
+                if (Array.isArray(data.students)) {
+                    // Filter out null/undefined entries just in case and ensure types
+                    const safeStudents = data.students
+                        .filter((s: any) => s && typeof s === 'object' && s.id)
+                        .map((s: any) => ({
+                            ...s,
+                            id: String(s.id),
+                            fullName: String(s.fullName || ''),
+                            firstName: String(s.firstName || ''),
+                            lastName: String(s.lastName || ''),
+                            class: formatClassName(String(s.class || '')) 
+                        }));
+                    setStudents(safeStudents);
+                } else {
+                     console.warn("Dữ liệu students không phải mảng", data.students);
+                }
+
+                if (data.examData && typeof data.examData === 'object') {
+                    setExamData(data.examData);
+                }
+            } else {
+                throw new Error("Cấu trúc dữ liệu không hợp lệ.");
+            }
             
+            const count = (data && Array.isArray(data.students)) ? data.students.length : 0;
             setSyncStatus("success");
-            setSyncMessage(`Đã tải thành công: ${data.students?.length || 0} học sinh.`);
+            setSyncMessage(`Đã tải thành công: ${count} học sinh.`);
         } catch (error) {
             console.error(error);
             setSyncStatus("error");
-            setSyncMessage("Lỗi kết nối: Không thể tải dữ liệu. Kiểm tra xem URL có đúng là Web App không.");
+            setSyncMessage("Lỗi: " + (error as Error).message);
         }
     };
 
     const getClassStats = useMemo(() => {
         const stats: Record<string, number> = {};
-        students.forEach(s => {
-            const c = s.class || 'Khác';
-            stats[c] = (stats[c] || 0) + 1;
-        });
+        if (Array.isArray(students)) {
+            students.forEach(s => {
+                if(s) {
+                    const c = s.class || 'Khác';
+                    stats[c] = (stats[c] || 0) + 1;
+                }
+            });
+        }
         return stats;
     }, [students]);
 
     // Collect all unique classes from all datasets for the filter dropdown
     const uniqueClasses = useMemo(() => {
         const classes = new Set<string>();
-        students.forEach(s => s.class && classes.add(s.class));
-        mathResults.forEach(s => s.class && classes.add(s.class));
-        scienceResults.forEach(s => s.class && classes.add(s.class));
-        itResults.forEach(s => s.class && classes.add(s.class));
-        historyResults.forEach(s => s.class && classes.add(s.class));
-        englishResults.forEach(s => s.class && classes.add(s.class));
+        const safeAdd = (list: any[]) => {
+            if(Array.isArray(list)) {
+                list.forEach(s => s && s.class && classes.add(s.class));
+            }
+        };
+        safeAdd(students);
+        safeAdd(mathResults);
+        safeAdd(scienceResults);
+        safeAdd(itResults);
+        safeAdd(historyResults);
+        safeAdd(englishResults);
+        
         return Array.from(classes).sort();
     }, [students, mathResults, scienceResults, itResults, historyResults, englishResults]);
 
     const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
-        const c = (className || '').toUpperCase();
+        const c = String(className || '').toUpperCase();
         if (c.includes('E')) return 'A1';
         if (c.includes('B')) return 'B';
         if (c.includes('A')) return 'A';
@@ -742,7 +780,8 @@ const RankingView = () => {
     };
 
     const getComputedData = useMemo(() => {
-        const filteredStudents = selectedClasses.length > 0 ? students.filter(s => selectedClasses.includes(s.class)) : students;
+        if (!Array.isArray(students)) return [];
+        const filteredStudents = selectedClasses.length > 0 ? students.filter(s => s && selectedClasses.includes(s.class)) : students;
         if (!filteredStudents.length) return [];
 
         const calcAvg = (values: number[]) => {
@@ -755,6 +794,7 @@ const RankingView = () => {
         const results: any[] = [];
 
         filteredStudents.forEach(s => {
+            if (!s) return;
             const block = getBlockType(s.class);
             let shouldInclude = false;
 
@@ -908,14 +948,17 @@ const RankingView = () => {
 
     // --- FIX: Define activeExamScoreList ---
     const activeExamScoreList = useMemo(() => {
-        let list = students;
+        let list = students || [];
         if (selectedClasses.length > 0) {
-            list = list.filter(s => selectedClasses.includes(s.class));
+            list = list.filter(s => s && selectedClasses.includes(s.class));
         }
-        return list.map(s => ({
-            ...s,
-            scores: examData[activeExamTime]?.[s.id] || {}
-        }));
+        return list.map(s => {
+             if (!s) return null;
+             return {
+                ...s,
+                scores: examData[activeExamTime]?.[s.id] || {}
+            };
+        }).filter(s => s !== null);
     }, [students, selectedClasses, examData, activeExamTime]);
     // ---------------------------------------
 
