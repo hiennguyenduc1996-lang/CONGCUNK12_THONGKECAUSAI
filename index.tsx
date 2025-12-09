@@ -416,7 +416,8 @@ const RankingView = () => {
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
     
     // Cloud State
-    const [scriptUrl, setScriptUrl] = useState(() => localStorage.getItem('gap_script_url') || '');
+    const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFwQd_LBj4GrNG5P-BlmHKBO4XLrhx6aN0dutYYbTSK2GJRL04J1OSLFc09Gcc3Qlt/exec";
+    const [scriptUrl, setScriptUrl] = useState(() => localStorage.getItem('gap_script_url') || DEFAULT_SCRIPT_URL);
     const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [syncMessage, setSyncMessage] = useState('');
 
