@@ -643,6 +643,12 @@ const RankingView = () => {
              return;
         }
 
+        const password = window.prompt("Vui lòng nhập mật khẩu để xác nhận đồng bộ:");
+        if (password !== "nguyenduchien") {
+            alert("Mật khẩu không đúng! Hủy đồng bộ.");
+            return;
+        }
+
         setSyncStatus("loading");
         setSyncMessage("Đang gửi dữ liệu lên Google Sheet...");
         
