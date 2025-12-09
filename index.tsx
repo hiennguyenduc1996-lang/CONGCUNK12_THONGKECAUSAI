@@ -12,30 +12,30 @@ declare const XLSX: any;
 interface StudentResult {
   sbd: string;
   name: string;
-  firstName: string; 
-  lastName: string;  
+  firstName: string;
+  lastName: string;
   code: string;
-  rawAnswers: Record<string, string>; 
+  rawAnswers: Record<string, string>;
   scores: {
     total: number;
     p1: number;
     p2: number;
     p3: number;
   };
-  details: Record<string, 'T' | 'F'>; 
+  details: Record<string, 'T' | 'F'>;
 }
 
 interface QuestionStat {
   index: number;
   wrongCount: number;
   wrongPercent: number;
-  correctKey: string; 
+  correctKey: string;
 }
 
 interface DocFile {
   id: string;
   name: string;
-  content: string; 
+  content: string;
   type: 'pdf' | 'text';
 }
 
@@ -46,19 +46,19 @@ interface SubjectConfig {
   totalQuestions: number;
   parts: {
     p1: { start: number; end: number; scorePerQ: number };
-    p2: { start: number; end: number; scorePerGroup: number }; 
+    p2: { start: number; end: number; scorePerGroup: number };
     p3: { start: number; end: number; scorePerQ: number };
   };
 }
 
 interface ThresholdConfig {
-  lowCount: number; 
-  highPercent: number; 
+  lowCount: number;
+  highPercent: number;
 }
 
 interface ColorConfig {
-  lowError: string; 
-  highError: string; 
+  lowError: string;
+  highError: string;
 }
 
 // --- Ranking & Summary Types ---
@@ -95,7 +95,7 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     totalQuestions: 34,
     parts: {
       p1: { start: 1, end: 12, scorePerQ: 0.25 },
-      p2: { start: 13, end: 28, scorePerGroup: 1.0 }, 
+      p2: { start: 13, end: 28, scorePerGroup: 1.0 },
       p3: { start: 29, end: 34, scorePerQ: 0.5 },
     }
   },
@@ -106,7 +106,7 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     totalQuestions: 40,
     parts: {
       p1: { start: 1, end: 18, scorePerQ: 0.25 },
-      p2: { start: 19, end: 34, scorePerGroup: 1.0 }, 
+      p2: { start: 19, end: 34, scorePerGroup: 1.0 },
       p3: { start: 35, end: 40, scorePerQ: 0.25 },
     }
   },
@@ -139,7 +139,7 @@ const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
     totalQuestions: 40,
     parts: {
       p1: { start: 1, end: 24, scorePerQ: 0.25 },
-      p2: { start: 25, end: 40, scorePerGroup: 1.0 }, 
+      p2: { start: 25, end: 40, scorePerGroup: 1.0 },
       p3: { start: 0, end: 0, scorePerQ: 0 },
     }
   }
@@ -191,14 +191,13 @@ const calculateGroupScore = (correctCount: number): number => {
 
 const getPart2Label = (index: number, subjectType: string): string => {
   const config = SUBJECTS_CONFIG[subjectType];
-  if (!config) return String(index);
   const p2 = config.parts.p2;
   
   if (index < p2.start || index > p2.end) return String(index);
 
   const relativeIndex = index - p2.start;
   const groupNum = Math.floor(relativeIndex / 4) + 1;
-  const charCode = 97 + (relativeIndex % 4); // 97 is 'a'
+  const charCode = 97 + (relativeIndex % 4); 
   
   return `${groupNum}${String.fromCharCode(charCode)}`;
 };
@@ -217,25 +216,18 @@ const exportExamToWord = (content: string, fileName: string) => {
             <meta charset="utf-8">
             <title>De_On_Tap</title>
             <style>
-                body {
-                    font-family: 'Times New Roman', serif;
-                    font-size: 12pt;
-                    line-height: 1.5;
-                }
+                body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; }
                 p { margin-bottom: 10px; }
             </style>
         </head>
-        <body>
-            ${content.replace(/\n/g, '<br>')}
-        </body>
+        <body>${content.replace(/\n/g, '<br>')}</body>
         </html>
     `;
-
     const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName || 'De_On_Tap'}.doc`; 
+    link.download = `${fileName || 'De_On_Tap'}.doc`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -246,7 +238,6 @@ const exportExamToWord = (content: string, fileName: string) => {
 
 const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 'it' | 'history') => {
   const config = SUBJECTS_CONFIG[subjectType];
-  
   const results: StudentResult[] = [];
   const questionStats: Record<number, number> = {}; 
   const correctKeysForDisplay: Record<number, string> = {}; 
@@ -260,11 +251,8 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
 
   data.forEach(row => {
     if (!row['StudentID'] && !row['LastName'] && !row['FirstName']) return;
-
     const version = String(row['Key Version'] || row['Exam Code'] || row['Mã đề'] || 'default').trim();
-    let p1Score = 0;
-    let p2Score = 0;
-    let p3Score = 0;
+    let p1Score = 0; let p2Score = 0; let p3Score = 0;
     const details: Record<string, 'T' | 'F'> = {};
     const rawAnswers: Record<string, string> = {};
 
@@ -283,11 +271,9 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       return stAns === keyAns;
     };
 
-    // --- Part 1 ---
     for (let i = config.parts.p1.start; i <= config.parts.p1.end; i++) {
       if (i === 0) continue;
-      const isCorrect = checkQuestion(i);
-      if (isCorrect) {
+      if (checkQuestion(i)) {
         p1Score += config.parts.p1.scorePerQ;
         details[i] = 'T';
       } else {
@@ -296,15 +282,13 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       }
     }
 
-    // --- Part 2 ---
     if (config.parts.p2.end > 0) {
       for (let i = config.parts.p2.start; i <= config.parts.p2.end; i += 4) {
         let correctInGroup = 0;
         for (let j = 0; j < 4; j++) {
            const currentQ = i + j;
            if (currentQ > config.parts.p2.end) break;
-           const isCorrect = checkQuestion(currentQ);
-           if (isCorrect) {
+           if (checkQuestion(currentQ)) {
              correctInGroup++;
              details[currentQ] = 'T';
            } else {
@@ -316,11 +300,9 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
       }
     }
 
-    // --- Part 3 ---
     if (config.parts.p3.end > 0) {
       for (let i = config.parts.p3.start; i <= config.parts.p3.end; i++) {
-         const isCorrect = checkQuestion(i);
-         if (isCorrect) {
+         if (checkQuestion(i)) {
            p3Score += config.parts.p3.scorePerQ;
            details[i] = 'T';
          } else {
@@ -355,10 +337,7 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
   const totalStudents = results.length;
   let isMultiVersion = false;
   for (let i = 1; i <= config.totalQuestions; i++) {
-      if (uniqueKeysPerQuestion[i].size > 1) {
-          isMultiVersion = true;
-          break;
-      }
+      if (uniqueKeysPerQuestion[i].size > 1) { isMultiVersion = true; break; }
   }
 
   for (let i = 1; i <= config.totalQuestions; i++) {
@@ -383,6 +362,7 @@ const RankingView = () => {
     const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
 
+    // -- Handler: Upload Student List --
     const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if(!file) return;
@@ -402,7 +382,7 @@ const RankingView = () => {
                 if (firstCol.includes('sbd') || firstCol.includes('số báo danh')) return;
 
                 const id = String(row[0] || '').trim();
-                if (!id) return;
+                if (!id) return; 
 
                 const lastName = String(row[1] || '').trim();
                 const firstName = String(row[2] || '').trim();
@@ -416,12 +396,14 @@ const RankingView = () => {
                     class: cl
                 });
             });
+
             setStudents(parsedStudents);
             e.target.value = ''; 
         };
         reader.readAsBinaryString(file);
     };
 
+    // -- Handler: Upload Scores --
     const handleScoreUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if(!file) return;
@@ -473,25 +455,16 @@ const RankingView = () => {
     };
 
     const handleDeleteScore = () => {
-        if(confirm(`Bạn có chắc muốn đưa toàn bộ điểm Lần ${activeExamTime} về 0 không?`)) {
+        if(confirm(`Bạn có chắc muốn xóa dữ liệu điểm của Lần ${activeExamTime} (đưa về 0) không?`)) {
             setExamData(prev => {
-                const newData = { ...prev };
-                
-                const currentData = newData[activeExamTime];
-                if (!currentData) return prev;
-
-                const resetData: Record<string, SubjectScores> = {};
-                // Loop through students in this exam set and zero them out
-                Object.keys(currentData).forEach(studentId => {
-                    resetData[studentId] = {
-                        math: 0, 
-                        phys: 0, 
-                        chem: 0, 
-                        bio: 0, 
-                        eng: 0
-                    };
-                });
-                newData[activeExamTime] = resetData;
+                const newData = {...prev};
+                if (newData[activeExamTime]) {
+                    Object.keys(newData[activeExamTime]).forEach(key => {
+                        newData[activeExamTime][key] = {
+                            math: 0, phys: 0, chem: 0, bio: 0, eng: 0
+                        };
+                    });
+                }
                 return newData;
             });
         }
@@ -506,80 +479,137 @@ const RankingView = () => {
         return stats;
     }, [students]);
 
+    // --- LOGIC XÁC ĐỊNH KHỐI ---
+    const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
+        const c = (className || '').toUpperCase();
+        if (c.includes('E')) return 'A1'; // "Khối A1 chứa chữ E"
+        if (c.includes('B')) return 'B';  // "lớp B" -> Khối B
+        if (c.includes('A')) return 'A';  // "lớp A" -> Khối A
+        return 'Other';
+    };
+
     const getComputedData = useMemo(() => {
         if (!students.length) return [];
 
-        return students.map(s => {
+        // Helper: Calculate average ignoring 0s, nulls, undefined
+        const calcAvg = (values: number[]) => {
+            const nonZero = values.filter(v => v !== undefined && v !== null && v !== 0);
+            if (nonZero.length === 0) return 0;
+            const sum = nonZero.reduce((a, b) => a + b, 0);
+            return sum / nonZero.length;
+        };
+
+        const results: any[] = [];
+
+        students.forEach(s => {
+            const block = getBlockType(s.class);
+            let shouldInclude = false;
+
+            // --- FILTER LOGIC ---
+            // Toán: Toàn bộ
+            // Lí: Khối A, A1
+            // Hóa: Khối A, B
+            // Sinh: Khối B
+            // Anh: Khối A1
+            // Khối A: Chỉ lớp A
+            // Khối B: Chỉ lớp B
+            // Khối A1: Chỉ lớp A1 (chứa E)
+            
+            if (summaryTab === 'math') shouldInclude = true;
+            else if (summaryTab === 'phys') shouldInclude = (block === 'A' || block === 'A1');
+            else if (summaryTab === 'chem') shouldInclude = (block === 'A' || block === 'B');
+            else if (summaryTab === 'bio') shouldInclude = (block === 'B');
+            else if (summaryTab === 'eng') shouldInclude = (block === 'A1');
+            else if (summaryTab === 'A') shouldInclude = (block === 'A');
+            else if (summaryTab === 'B') shouldInclude = (block === 'B');
+            else if (summaryTab === 'A1') shouldInclude = (block === 'A1');
+            else if (summaryTab === 'total') shouldInclude = (block === 'A' || block === 'B' || block === 'A1');
+
+            if (!shouldInclude) return;
+
             const row: any = { ...s };
-            const scores: number[] = [];
-            let sum = 0;
-            let count = 0;
+
+            // Collect scores for all exams
+            const scores = {
+                math: [] as number[],
+                phys: [] as number[],
+                chem: [] as number[],
+                bio: [] as number[],
+                eng: [] as number[]
+            };
 
             for (let i = 1; i <= 40; i++) {
                 const record = examData[i]?.[s.id];
-                let val: number | undefined = undefined;
-
                 if (record) {
-                    if (summaryTab === 'math') val = record.math;
-                    else if (summaryTab === 'phys') val = record.phys;
-                    else if (summaryTab === 'chem') val = record.chem;
-                    else if (summaryTab === 'bio') val = record.bio;
-                    else if (summaryTab === 'eng') val = record.eng;
-                    else if (summaryTab === 'A') {
-                         if (record.math !== undefined && record.phys !== undefined && record.chem !== undefined)
-                            val = record.math + record.phys + record.chem;
-                    }
-                    else if (summaryTab === 'A1') {
-                         if (record.math !== undefined && record.phys !== undefined && record.eng !== undefined)
-                            val = record.math + record.phys + record.eng;
-                    }
-                    else if (summaryTab === 'B') {
-                         if (record.math !== undefined && record.chem !== undefined && record.bio !== undefined)
-                            val = record.math + record.chem + record.bio;
-                    }
-                    else if (summaryTab === 'total') {
-                        const cls = s.class.toUpperCase();
-                        let blockSum = 0;
-                        let hasData = false;
-                        if (cls.includes('E')) {
-                             if (record.math !== undefined || record.phys !== undefined || record.eng !== undefined) {
-                                blockSum = (record.math || 0) + (record.phys || 0) + (record.eng || 0);
-                                hasData = true;
-                            }
-                        } 
-                        else if (cls.includes('B')) {
-                             if (record.math !== undefined || record.chem !== undefined || record.bio !== undefined) {
-                                blockSum = (record.math || 0) + (record.chem || 0) + (record.bio || 0);
-                                hasData = true;
-                            }
-                        }
-                        else if (cls.includes('A')) {
-                             if (record.math !== undefined || record.phys !== undefined || record.chem !== undefined) {
-                                blockSum = (record.math || 0) + (record.phys || 0) + (record.chem || 0);
-                                hasData = true;
-                            }
-                        }
-                        if (hasData) val = blockSum;
-                    }
-                }
-
-                if (val !== undefined) {
-                    row[`score_${i}`] = val;
-                    // IGNORE 0 in calculation
-                    if (val !== 0) {
-                        scores.push(val);
-                        sum += val;
-                        count++;
-                    }
+                    if (record.math !== undefined) scores.math.push(record.math);
+                    if (record.phys !== undefined) scores.phys.push(record.phys);
+                    if (record.chem !== undefined) scores.chem.push(record.chem);
+                    if (record.bio !== undefined) scores.bio.push(record.bio);
+                    if (record.eng !== undefined) scores.eng.push(record.eng);
                 }
             }
 
-            row.avg = count > 0 ? parseFloat((sum / count).toFixed(2)) : null;
-            row.totalVal = sum;
-            row.lastScore = scores.length > 0 ? scores[scores.length - 1] : null;
+            // Calculate Averages for each subject (ignoring 0)
+            const avgMath = calcAvg(scores.math);
+            const avgPhys = calcAvg(scores.phys);
+            const avgChem = calcAvg(scores.chem);
+            const avgBio = calcAvg(scores.bio);
+            const avgEng = calcAvg(scores.eng);
 
-            return row;
+            // --- CALCULATION LOGIC FOR RANKING ---
+            let finalVal = 0;
+
+            if (summaryTab === 'math') finalVal = avgMath;
+            else if (summaryTab === 'phys') finalVal = avgPhys;
+            else if (summaryTab === 'chem') finalVal = avgChem;
+            else if (summaryTab === 'bio') finalVal = avgBio;
+            else if (summaryTab === 'eng') finalVal = avgEng;
+            // Blocks: Sum of Averages
+            else if (summaryTab === 'A') finalVal = avgMath + avgPhys + avgChem;
+            else if (summaryTab === 'B') finalVal = avgMath + avgChem + avgBio;
+            else if (summaryTab === 'A1') finalVal = avgMath + avgPhys + avgEng;
+            else if (summaryTab === 'total') {
+                if (block === 'A') finalVal = avgMath + avgPhys + avgChem;
+                else if (block === 'B') finalVal = avgMath + avgChem + avgBio;
+                else if (block === 'A1') finalVal = avgMath + avgPhys + avgEng;
+            }
+
+            // Populate Column Display Data (L1 -> L40)
+            // If Block Tab: Show Sum of Scores for that Exam (if present)
+            // If Subject Tab: Show Subject Score
+            for (let i = 1; i <= 40; i++) {
+                 const record = examData[i]?.[s.id];
+                 let colVal: number | undefined = undefined;
+
+                 if (record) {
+                    if (['math','phys','chem','bio','eng'].includes(summaryTab)) {
+                         colVal = record[summaryTab as keyof SubjectScores];
+                    } else {
+                        // Block display for daily columns
+                        const v = (val: number|undefined) => val ?? 0;
+                        const has = (val: number|undefined) => val !== undefined;
+                        
+                        if (summaryTab === 'A' || (summaryTab === 'total' && block === 'A')) {
+                             if(has(record.math) || has(record.phys) || has(record.chem)) 
+                                colVal = v(record.math) + v(record.phys) + v(record.chem);
+                        } else if (summaryTab === 'B' || (summaryTab === 'total' && block === 'B')) {
+                             if(has(record.math) || has(record.chem) || has(record.bio))
+                                colVal = v(record.math) + v(record.chem) + v(record.bio);
+                        } else if (summaryTab === 'A1' || (summaryTab === 'total' && block === 'A1')) {
+                             if(has(record.math) || has(record.phys) || has(record.eng))
+                                colVal = v(record.math) + v(record.phys) + v(record.eng);
+                        }
+                    }
+                 }
+                 row[`score_${i}`] = colVal;
+            }
+
+            row.avg = parseFloat(finalVal.toFixed(2));
+            row.totalVal = finalVal; 
+            results.push(row);
         });
+
+        return results;
     }, [students, examData, summaryTab]);
 
     const sortedData = useMemo(() => {
@@ -588,15 +618,12 @@ const RankingView = () => {
         sorted.sort((a, b) => {
             let va = a[sortConfig.key];
             let vb = b[sortConfig.key];
-            
             if (va === null || va === undefined) return 1;
             if (vb === null || vb === undefined) return -1;
-
             if (sortConfig.key === 'firstName') {
                  if (a.firstName !== b.firstName) return a.firstName.localeCompare(b.firstName) * (sortConfig.direction === 'asc' ? 1 : -1);
                  return a.lastName.localeCompare(b.lastName) * (sortConfig.direction === 'asc' ? 1 : -1);
             }
-
             if (va < vb) return sortConfig.direction === 'asc' ? -1 : 1;
             if (va > vb) return sortConfig.direction === 'asc' ? 1 : -1;
             return 0;
@@ -632,8 +659,7 @@ const RankingView = () => {
                     style={{ 
                         padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
                         background: subTab === 'students' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'students' ? '#1e3a8a' : '#64748b',
-                        fontWeight: subTab === 'students' ? 600 : 500,
+                        color: subTab === 'students' ? '#1e3a8a' : '#64748b', fontWeight: subTab === 'students' ? 600 : 500,
                         display: 'flex', alignItems: 'center', gap: '10px'
                     }}
                 >
@@ -644,8 +670,7 @@ const RankingView = () => {
                     style={{ 
                         padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
                         background: subTab === 'scores' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'scores' ? '#1e3a8a' : '#64748b',
-                        fontWeight: subTab === 'scores' ? 600 : 500,
+                        color: subTab === 'scores' ? '#1e3a8a' : '#64748b', fontWeight: subTab === 'scores' ? 600 : 500,
                         display: 'flex', alignItems: 'center', gap: '10px'
                     }}
                 >
@@ -656,8 +681,7 @@ const RankingView = () => {
                     style={{ 
                         padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
                         background: subTab === 'summary' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'summary' ? '#1e3a8a' : '#64748b',
-                        fontWeight: subTab === 'summary' ? 600 : 500,
+                        color: subTab === 'summary' ? '#1e3a8a' : '#64748b', fontWeight: subTab === 'summary' ? 600 : 500,
                         display: 'flex', alignItems: 'center', gap: '10px'
                     }}
                 >
@@ -666,6 +690,7 @@ const RankingView = () => {
             </div>
 
             <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                
                 {subTab === 'students' && (
                     <div style={{ display: 'flex', gap: '24px', height: '100%' }}>
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
@@ -753,7 +778,7 @@ const RankingView = () => {
                          <div style={{ padding: '24px', borderBottom:'1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                              <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                                  <h3 style={{ margin: '0 0 10px 0', color: '#1e293b' }}>Dữ liệu điểm - Lần {activeExamTime}</h3>
-                                 <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Tải file Excel (.xlsx) chứa sheet "DIEMKHOI".</p>
+                                 <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Tải file Excel (.xlsx) chứa sheet "DIEMKHOI". Cột B là SBD, các cột F, G, H, I, J là điểm.</p>
                              </div>
 
                              <div style={{ display: 'flex', gap: '15px' }}>
@@ -772,7 +797,7 @@ const RankingView = () => {
                                             padding: '12px 24px', background: '#ef4444', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
                                             cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(239, 68, 68, 0.3)'
                                         }}>
-                                        <Trash2 size={18} /> Xóa dữ liệu (Về 0)
+                                        <Trash2 size={18} /> Xóa dữ liệu
                                     </button>
                                 )}
                              </div>
@@ -829,7 +854,6 @@ const RankingView = () => {
 
                 {subTab === 'summary' && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                        
                         <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap' }}>
                              {[
                                  {id: 'math', label: 'Toán'},
@@ -837,10 +861,10 @@ const RankingView = () => {
                                  {id: 'chem', label: 'Hóa'},
                                  {id: 'eng', label: 'Anh'},
                                  {id: 'bio', label: 'Sinh'},
-                                 {id: 'A', label: 'Khối A'},
-                                 {id: 'A1', label: 'Khối A1'},
-                                 {id: 'B', label: 'Khối B'},
-                                 {id: 'total', label: 'Tổng Khối'},
+                                 {id: 'A', label: 'Khối A (T-L-H)'},
+                                 {id: 'A1', label: 'Khối A1 (T-L-A)'},
+                                 {id: 'B', label: 'Khối B (T-H-S)'},
+                                 {id: 'total', label: 'Tổng Khối (Tự động)'},
                              ].map(tab => (
                                  <button 
                                     key={tab.id}
@@ -919,7 +943,7 @@ const RankingView = () => {
                                     {sortedData.length === 0 && (
                                         <tr>
                                             <td colSpan={45} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
-                                                Chưa có dữ liệu. Hãy tải danh sách học sinh và điểm các lần thi.
+                                                {students.length === 0 ? "Chưa có dữ liệu. Hãy tải danh sách học sinh và điểm các lần thi." : "Không có học sinh nào phù hợp với bộ lọc này."}
                                             </td>
                                         </tr>
                                     )}
@@ -947,7 +971,9 @@ const App = () => {
   const [fileName, setFileName] = useState<string>("");
 
   const [statsPartFilter, setStatsPartFilter] = useState<'all' | 'p1' | 'p2' | 'p3'>('all');
+
   const [questionCounts, setQuestionCounts] = useState<Record<number, number>>({});
+
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
   const [thresholds, setThresholds] = useState<ThresholdConfig>(() => {
@@ -1031,7 +1057,7 @@ const App = () => {
       const { results, stats: newStats } = processData(data, activeSubject as any);
       setProcessedResults(results);
       setStats(newStats);
-      setQuestionCounts({});
+      setQuestionCounts({}); 
     }
   }, [activeSubject]);
 
@@ -1099,9 +1125,15 @@ const App = () => {
           if (statsPartFilter === 'all') return true;
           
           const idx = s.index;
-          if (statsPartFilter === 'p1') return idx >= config.parts.p1.start && idx <= config.parts.p1.end;
-          if (statsPartFilter === 'p2') return idx >= config.parts.p2.start && idx <= config.parts.p2.end;
-          if (statsPartFilter === 'p3') return idx >= config.parts.p3.start && idx <= config.parts.p3.end;
+          if (statsPartFilter === 'p1') {
+              return idx >= config.parts.p1.start && idx <= config.parts.p1.end;
+          }
+          if (statsPartFilter === 'p2') {
+              return idx >= config.parts.p2.start && idx <= config.parts.p2.end;
+          }
+          if (statsPartFilter === 'p3') {
+              return idx >= config.parts.p3.start && idx <= config.parts.p3.end;
+          }
           return false;
       }).sort((a,b) => b.wrongCount - a.wrongCount);
   }, [stats, statsPartFilter, thresholds.highPercent, activeSubject]);
@@ -1215,6 +1247,8 @@ const App = () => {
     if (!sortConfig || sortConfig.key !== key) return <ArrowUpDown size={12} style={{ opacity: 0.3 }} />;
     return sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
+
+  // --- UI RENDER ---
 
   if (showSettings) {
     return (
@@ -1833,9 +1867,11 @@ const App = () => {
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
         table th, table td { vertical-align: middle; }
       `}</style>
     </div>
