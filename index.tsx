@@ -355,7 +355,7 @@ const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 
 // --- RANKING & SUMMARY COMPONENT ---
 
 const RankingView = () => {
-    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary'>('students');
+    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary'>('students');
     const [students, setStudents] = useState<StudentProfile[]>([]);
     const [examData, setExamData] = useState<ExamDataStore>({});
     const [activeExamTime, setActiveExamTime] = useState<number>(1);
@@ -695,6 +695,17 @@ const RankingView = () => {
                 >
                     <Award size={18} /> Tổng kết
                 </button>
+                 <button 
+                    onClick={() => setSubTab('sort-summary')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'sort-summary' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'sort-summary' ? '#1e3a8a' : '#64748b', fontWeight: subTab === 'sort-summary' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Sigma size={18} /> Sort Ngang
+                </button>
             </div>
 
             <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -860,7 +871,7 @@ const RankingView = () => {
                      </div>
                 )}
 
-                {subTab === 'summary' && (
+                {(subTab === 'summary' || subTab === 'sort-summary') && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                         <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap', alignItems: 'center' }}>
                              {[
@@ -935,7 +946,7 @@ const RankingView = () => {
                                       cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'white',
                                       display: 'flex', alignItems: 'center', gap: '8px'
                                    }}
-                                >
+                                 >
                                    <FileDown size={14} /> Xuất Excel
                                 </button>
                              </div>
@@ -966,27 +977,44 @@ const RankingView = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {sortedData.map((row, idx) => (
-                                        <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
-                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{idx + 1}</td>
-                                            <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 600, color: '#475569' }}>{row.id}</td>
-                                            <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 500 }}>{row.fullName}</td>
-                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.class}</td>
-                                            
-                                            {Array.from({length: 40}, (_, i) => i + 1).map(num => {
-                                                const val = row[`score_${num}`];
-                                                return (
-                                                    <td key={num} style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', color: val ? '#0f172a' : '#cbd5e1' }}>
-                                                        {val !== undefined ? val : '-'}
-                                                    </td>
-                                                );
-                                            })}
+                                    {sortedData.map((row, idx) => {
+                                        let scoresToDisplay: (number|undefined)[] = [];
+                                        if (subTab === 'sort-summary') {
+                                            const collectedScores: number[] = [];
+                                            for (let i = 1; i <= 40; i++) {
+                                                const val = row[`score_${i}`];
+                                                if (val !== undefined && val !== null) {
+                                                    collectedScores.push(val);
+                                                }
+                                            }
+                                            collectedScores.sort((a, b) => b - a);
+                                            scoresToDisplay = Array.from({ length: 40 }, (_, i) => collectedScores[i]);
+                                        }
 
-                                            <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', background: '#f0f9ff', position: 'sticky', right: 0, fontWeight: 700, color: '#0369a1' }}>
-                                                {row.avg !== null ? row.avg : '-'}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                        return (
+                                            <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                                                <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{idx + 1}</td>
+                                                <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 600, color: '#475569' }}>{row.id}</td>
+                                                <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 500 }}>{row.fullName}</td>
+                                                <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.class}</td>
+                                                
+                                                {Array.from({length: 40}, (_, i) => i + 1).map(num => {
+                                                    const val = subTab === 'sort-summary'
+                                                        ? scoresToDisplay[num - 1]
+                                                        : row[`score_${num}`];
+                                                    return (
+                                                        <td key={num} style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', color: (val !== undefined && val !== null) ? '#0f172a' : '#cbd5e1' }}>
+                                                            {(val !== undefined && val !== null) ? val : '-'}
+                                                        </td>
+                                                    );
+                                                })}
+
+                                                <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', background: '#f0f9ff', position: 'sticky', right: 0, fontWeight: 700, color: '#0369a1' }}>
+                                                    {row.avg !== null ? row.avg : '-'}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                     {sortedData.length === 0 && (
                                         <tr>
                                             <td colSpan={45} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
