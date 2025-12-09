@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2 } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -32,36 +32,21 @@ interface QuestionStat {
   correctKey: string;
 }
 
-interface DocFile {
-  id: string;
-  name: string;
-  content: string;
-  type: 'pdf' | 'text';
+interface GradingRow {
+    stt: number;
+    sbd: string;
+    fullName: string;
+    firstName: string; // Separate for sorting
+    lastName: string;  // Separate for sorting
+    class: string;
+    examCode: string;
+    totalScore: number;
+    p1Score: number;
+    p2Score: number;
+    p3Score: number;
+    // Map of Question Index (1-40/50) -> Student Answer (if wrong), null/empty if correct
+    answers: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }>;
 }
-
-interface SubjectConfig {
-  id: string;
-  name: string;
-  type: 'math' | 'science' | 'english' | 'it' | 'history';
-  totalQuestions: number;
-  parts: {
-    p1: { start: number; end: number; scorePerQ: number };
-    p2: { start: number; end: number; scorePerGroup: number };
-    p3: { start: number; end: number; scorePerQ: number };
-  };
-}
-
-interface ThresholdConfig {
-  lowCount: number;
-  highPercent: number;
-}
-
-interface ColorConfig {
-  lowError: string;
-  highError: string;
-}
-
-// --- Ranking & Summary Types ---
 
 interface StudentProfile {
     id: string;
@@ -85,98 +70,26 @@ interface SubjectScores {
 // Map: ExamIndex (1-40) -> Map: StudentID -> Scores
 type ExamDataStore = Record<number, Record<string, SubjectScores>>;
 
-// --- Constants ---
-
-const SUBJECTS_CONFIG: Record<string, SubjectConfig> = {
-  math: {
-    id: 'math',
-    name: 'Toán Học',
-    type: 'math',
-    totalQuestions: 34,
-    parts: {
-      p1: { start: 1, end: 12, scorePerQ: 0.25 },
-      p2: { start: 13, end: 28, scorePerGroup: 1.0 },
-      p3: { start: 29, end: 34, scorePerQ: 0.5 },
-    }
-  },
-  science: {
-    id: 'science',
-    name: 'KHTN (Lý/Hóa/Sinh)',
-    type: 'science',
-    totalQuestions: 40,
-    parts: {
-      p1: { start: 1, end: 18, scorePerQ: 0.25 },
-      p2: { start: 19, end: 34, scorePerGroup: 1.0 },
-      p3: { start: 35, end: 40, scorePerQ: 0.25 },
-    }
-  },
-  english: {
-    id: 'english',
-    name: 'Tiếng Anh',
-    type: 'english',
-    totalQuestions: 40,
-    parts: {
-      p1: { start: 1, end: 40, scorePerQ: 0.25 },
-      p2: { start: 0, end: 0, scorePerGroup: 0 },
-      p3: { start: 0, end: 0, scorePerQ: 0 },
-    }
-  },
-  it: {
-    id: 'it',
-    name: 'Tin học',
-    type: 'it',
-    totalQuestions: 40, 
-    parts: {
-      p1: { start: 1, end: 28, scorePerQ: 0.25 },
-      p2: { start: 29, end: 40, scorePerGroup: 1.0 },
-      p3: { start: 0, end: 0, scorePerQ: 0 },
-    }
-  },
-  history: {
-    id: 'history',
-    name: 'Lịch sử',
-    type: 'history',
-    totalQuestions: 40,
-    parts: {
-      p1: { start: 1, end: 24, scorePerQ: 0.25 },
-      p2: { start: 25, end: 40, scorePerGroup: 1.0 },
-      p3: { start: 0, end: 0, scorePerQ: 0 },
-    }
-  }
-};
-
-const DEFAULT_COLORS = {
-    blue: '#dbeafe', 
-    yellow: '#fef9c3', 
-    red: '#fee2e2'
-};
-
 // --- Helper Functions ---
 
-const fileToBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve((reader.result as string).split(',')[1]);
-    reader.onerror = reject;
-  });
+const formatClassName = (raw: string): string => {
+    let s = String(raw || '').trim();
+    // Regex: Starts with 12, followed by one or more zeros
+    // 120 (1 zero) -> 12E1
+    // 1200 (2 zeros) -> 12E2
+    // ...
+    // 120000000000 (10 zeros) -> 12E10
+    const match = s.match(/^12(0+)$/);
+    if (match) {
+        return `12E${match[1].length}`;
+    }
+    return s;
 };
 
-const extractTextFromDocx = async (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const arrayBuffer = event.target?.result;
-      if (typeof mammoth !== 'undefined') {
-        mammoth.extractRawText({ arrayBuffer })
-          .then((result: any) => resolve(result.value))
-          .catch(reject);
-      } else {
-        reject("Mammoth not loaded");
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  });
+const formatFullName = (lName: string, fName: string): string => {
+    const full = `${lName} ${fName}`.replace(/\s+/g, ' ').trim();
+    if (full === 'Phát Hứa Kiến') return 'Hứa Kiến Phát';
+    return full;
 };
 
 const calculateGroupScore = (correctCount: number): number => {
@@ -189,19 +102,6 @@ const calculateGroupScore = (correctCount: number): number => {
   }
 };
 
-const getPart2Label = (index: number, subjectType: string): string => {
-  const config = SUBJECTS_CONFIG[subjectType];
-  const p2 = config.parts.p2;
-  
-  if (index < p2.start || index > p2.end) return String(index);
-
-  const relativeIndex = index - p2.start;
-  const groupNum = Math.floor(relativeIndex / 4) + 1;
-  const charCode = 97 + (relativeIndex % 4); 
-  
-  return `${groupNum}${String.fromCharCode(charCode)}`;
-};
-
 const exportToExcel = (elementId: string, fileName: string) => {
     const table = document.getElementById(elementId);
     if (!table || typeof XLSX === 'undefined') return;
@@ -209,159 +109,212 @@ const exportToExcel = (elementId: string, fileName: string) => {
     XLSX.writeFile(wb, `${fileName || 'Thong_ke'}.xlsx`);
 };
 
-const exportExamToWord = (content: string, fileName: string) => {
-    const htmlContent = `
-        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-        <head>
-            <meta charset="utf-8">
-            <title>De_On_Tap</title>
-            <style>
-                body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; }
-                p { margin-bottom: 10px; }
-            </style>
-        </head>
-        <body>${content.replace(/\n/g, '<br>')}</body>
-        </html>
-    `;
-    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${fileName || 'De_On_Tap'}.doc`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+// --- Generic ZipGrade Processor ---
+interface GradingConfig {
+    p1?: { start: number; end: number; val: number };
+    p2?: { ranges: Array<[number, number]> }; // Start-End inclusive for each group
+    p3?: { start: number; end: number; val: number };
+    ignore?: Array<[number, number]>; // Ranges to ignore
+    totalQuestions: number;
+}
+
+const processZipGradeFile = (file: File, config: GradingConfig): Promise<GradingRow[]> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        // FORCE UTF-8 READ for CSV compatibility to fix encoding issues like "Anh LÆ°u Quá»‘c"
+        reader.readAsText(file, 'UTF-8');
+        
+        reader.onload = (evt) => {
+            const text = evt.target?.result;
+            // Parse the string data
+            const wb = XLSX.read(text, { type: 'string' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+            
+            if (data.length < 2) {
+                resolve([]);
+                return;
+            }
+
+            const headers = data[0].map((h: any) => String(h || '').trim());
+            
+            // Map Headers to Indices
+            const mapIdx = (keys: string[]) => headers.findIndex(h => keys.some(k => h.toUpperCase() === k.toUpperCase()));
+            
+            const idxSBD = mapIdx(['Student ID', 'External ID', 'SBD', 'StudentID']);
+            const idxFirstName = mapIdx(['First Name', 'FirstName']);
+            const idxLastName = mapIdx(['Last Name', 'LastName']);
+            const idxClass = mapIdx(['Class', 'Lớp']);
+            const idxCode = mapIdx(['Key Version', 'Exam Code', 'Mã đề']);
+
+            // Find Answer Columns (Stu1, PriKey1...)
+            const getColIdx = (prefix: string, num: number) => headers.indexOf(`${prefix}${num}`);
+
+            const processed: GradingRow[] = [];
+            
+            // Iterate rows (skip header)
+            for (let r = 1; r < data.length; r++) {
+                const row = data[r];
+                if (!row || row.length === 0) continue;
+
+                // 1. Extract Student Info
+                const sbd = idxSBD > -1 ? String(row[idxSBD] || '') : String(row[0] || ''); 
+                
+                // Fallback for Class: User requested Column B (Index 1) if not found
+                let className = '';
+                if (idxClass > -1) className = String(row[idxClass] || '');
+                else if (row[1]) className = String(row[1] || '');
+                
+                // Format Class Name (1200 -> 12E2, etc.)
+                className = formatClassName(className);
+
+                // --- NAME FIX: SWAP COLUMNS ---
+                // User data often has Last Name in "First Name" col and First Name in "Last Name" col for sorting.
+                // We extract them normally first.
+                const rawFirstNameCol = idxFirstName > -1 ? String(row[idxFirstName] || '').trim() : '';
+                const rawLastNameCol = idxLastName > -1 ? String(row[idxLastName] || '').trim() : '';
+
+                // Then swap assignment to match Vietnamese semantics:
+                // fName (Tên) <= rawLastNameCol
+                // lName (Họ) <= rawFirstNameCol
+                const fName = rawLastNameCol; 
+                const lName = rawFirstNameCol;
+                
+                // Name Fix: Last Name + First Name + formatting
+                const fullName = formatFullName(lName, fName);
+
+                const code = idxCode > -1 ? String(row[idxCode] || '') : '';
+
+                if (!sbd && !fullName) continue;
+
+                // 2. Scoring
+                let p1 = 0; let p2 = 0; let p3 = 0;
+                const ansMap: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }> = {};
+
+                const getCellVal = (prefix: string, qNum: number) => {
+                    const cIdx = getColIdx(prefix, qNum);
+                    if (cIdx === -1) return '';
+                    return String(row[cIdx] || '').trim().toUpperCase();
+                };
+
+                const isIgnored = (q: number) => {
+                    if (!config.ignore) return false;
+                    return config.ignore.some(([s, e]) => q >= s && q <= e);
+                };
+
+                // Logic P1
+                if (config.p1) {
+                    for (let i = config.p1.start; i <= config.p1.end; i++) {
+                        const stu = getCellVal('Stu', i);
+                        const key = getCellVal('PriKey', i);
+                        const correct = (stu === key && key !== '');
+                        const ignored = isIgnored(i);
+                        
+                        if (!ignored && correct) p1 += config.p1.val;
+                        ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
+                    }
+                }
+
+                // Logic P2 (Groups)
+                if (config.p2 && config.p2.ranges) {
+                    config.p2.ranges.forEach(([start, end]) => {
+                        let correctCount = 0;
+                        const groupSize = end - start + 1;
+                        for (let k = 0; k < groupSize; k++) {
+                            const qIdx = start + k;
+                            const stu = getCellVal('Stu', qIdx);
+                            const key = getCellVal('PriKey', qIdx);
+                            const correct = (stu === key && key !== '');
+                            if (correct) correctCount++;
+                            ansMap[qIdx] = { val: stu, isCorrect: correct, isIgnored: false };
+                        }
+                        p2 += calculateGroupScore(correctCount);
+                    });
+                }
+
+                // Logic P3
+                if (config.p3) {
+                     for (let i = config.p3.start; i <= config.p3.end; i++) {
+                        const stu = getCellVal('Stu', i);
+                        const key = getCellVal('PriKey', i);
+                        const correct = (stu === key && key !== '');
+                        const ignored = isIgnored(i);
+                        
+                        if (!ignored && correct) p3 += config.p3.val;
+                        ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
+                    }
+                }
+
+                // Handle completely ignored ranges
+                for(let i=1; i <= config.totalQuestions; i++) {
+                    if (!ansMap[i]) {
+                         const stu = getCellVal('Stu', i);
+                         ansMap[i] = { val: stu, isCorrect: false, isIgnored: true };
+                    }
+                }
+
+                // Rounding
+                p1 = Math.round(p1 * 100) / 100;
+                p2 = Math.round(p2 * 100) / 100;
+                p3 = Math.round(p3 * 100) / 100;
+                const total = Math.round((p1 + p2 + p3) * 100) / 100;
+
+                processed.push({
+                    stt: processed.length + 1,
+                    sbd,
+                    fullName,
+                    firstName: fName,
+                    lastName: lName,
+                    class: className,
+                    examCode: code,
+                    totalScore: total,
+                    p1Score: p1,
+                    p2Score: p2,
+                    p3Score: p3,
+                    answers: ansMap
+                });
+            }
+            resolve(processed);
+        };
+        reader.onerror = reject;
+    });
 };
 
-
-// --- Scoring Engine ---
-
-const processData = (data: any[], subjectType: 'math' | 'science' | 'english' | 'it' | 'history') => {
-  const config = SUBJECTS_CONFIG[subjectType];
-  const results: StudentResult[] = [];
-  const questionStats: Record<number, number> = {}; 
-  const correctKeysForDisplay: Record<number, string> = {}; 
-  const uniqueKeysPerQuestion: Record<number, Set<string>> = {};
-
-  for (let i = 1; i <= config.totalQuestions; i++) {
-    questionStats[i] = 0;
-    correctKeysForDisplay[i] = ''; 
-    uniqueKeysPerQuestion[i] = new Set();
-  }
-
-  data.forEach(row => {
-    if (!row['StudentID'] && !row['LastName'] && !row['FirstName']) return;
-    const version = String(row['Key Version'] || row['Exam Code'] || row['Mã đề'] || 'default').trim();
-    let p1Score = 0; let p2Score = 0; let p3Score = 0;
-    const details: Record<string, 'T' | 'F'> = {};
-    const rawAnswers: Record<string, string> = {};
-
-    const checkQuestion = (idx: number) => {
-      const stCol = `Stu${idx}`;
-      const keyCol = `PriKey${idx}`;
-      const stAns = String(row[stCol] || '').trim().toUpperCase();
-      let keyAns = String(row[keyCol] || '').trim().toUpperCase();
-
-      if (keyAns) {
-          uniqueKeysPerQuestion[idx].add(keyAns);
-          if (!correctKeysForDisplay[idx]) correctKeysForDisplay[idx] = keyAns;
-      }
-      rawAnswers[idx] = stAns;
-      if (!keyAns) return false;
-      return stAns === keyAns;
-    };
-
-    for (let i = config.parts.p1.start; i <= config.parts.p1.end; i++) {
-      if (i === 0) continue;
-      if (checkQuestion(i)) {
-        p1Score += config.parts.p1.scorePerQ;
-        details[i] = 'T';
-      } else {
-        details[i] = 'F';
-        questionStats[i]++;
-      }
-    }
-
-    if (config.parts.p2.end > 0) {
-      for (let i = config.parts.p2.start; i <= config.parts.p2.end; i += 4) {
-        let correctInGroup = 0;
-        for (let j = 0; j < 4; j++) {
-           const currentQ = i + j;
-           if (currentQ > config.parts.p2.end) break;
-           if (checkQuestion(currentQ)) {
-             correctInGroup++;
-             details[currentQ] = 'T';
-           } else {
-             details[currentQ] = 'F';
-             questionStats[currentQ]++;
-           }
-        }
-        p2Score += calculateGroupScore(correctInGroup);
-      }
-    }
-
-    if (config.parts.p3.end > 0) {
-      for (let i = config.parts.p3.start; i <= config.parts.p3.end; i++) {
-         if (checkQuestion(i)) {
-           p3Score += config.parts.p3.scorePerQ;
-           details[i] = 'T';
-         } else {
-           details[i] = 'F';
-           questionStats[i]++;
-         }
-      }
-    }
-
-    p1Score = Math.round(p1Score * 100) / 100;
-    p2Score = Math.round(p2Score * 100) / 100;
-    p3Score = Math.round(p3Score * 100) / 100;
-    const totalScore = Math.round((p1Score + p2Score + p3Score) * 100) / 100;
-
-    const fName = String(row['FirstName'] || '').trim();
-    const lName = String(row['LastName'] || '').trim();
-    const fullName = `${fName} ${lName}`.trim(); 
-
-    results.push({
-      sbd: String(row['StudentID'] || ''),
-      firstName: fName,
-      lastName: lName,
-      name: fullName,
-      code: version,
-      rawAnswers,
-      scores: { total: totalScore, p1: p1Score, p2: p2Score, p3: p3Score },
-      details
-    });
-  });
-
-  const stats: QuestionStat[] = [];
-  const totalStudents = results.length;
-  let isMultiVersion = false;
-  for (let i = 1; i <= config.totalQuestions; i++) {
-      if (uniqueKeysPerQuestion[i].size > 1) { isMultiVersion = true; break; }
-  }
-
-  for (let i = 1; i <= config.totalQuestions; i++) {
-    stats.push({
-      index: i,
-      wrongCount: questionStats[i],
-      wrongPercent: totalStudents > 0 ? parseFloat(((questionStats[i] / totalStudents) * 100).toFixed(1)) : 0,
-      correctKey: isMultiVersion ? '*' : (correctKeysForDisplay[i] || '-')
-    });
-  }
-
-  return { results, stats };
-};
 
 // --- RANKING & SUMMARY COMPONENT ---
 
 const RankingView = () => {
-    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary'>('students');
+    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary' | 'math-grading' | 'science-grading' | 'it-grading' | 'history-grading' | 'english-grading'>('students');
     const [students, setStudents] = useState<StudentProfile[]>([]);
     const [examData, setExamData] = useState<ExamDataStore>({});
     const [activeExamTime, setActiveExamTime] = useState<number>(1);
     const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
-    const [classFilter, setClassFilter] = useState<string>('');
+    
+    // Multi-select Filter
+    const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
+    const filterRef = useRef<HTMLDivElement>(null);
+
+    // Grading States
+    const [mathResults, setMathResults] = useState<GradingRow[]>([]);
+    const [scienceResults, setScienceResults] = useState<GradingRow[]>([]);
+    const [itResults, setItResults] = useState<GradingRow[]>([]);
+    const [historyResults, setHistoryResults] = useState<GradingRow[]>([]);
+    const [englishResults, setEnglishResults] = useState<GradingRow[]>([]);
+
+    const [activeSortConfig, setActiveSortConfig] = useState<{ key: 'sbd' | 'name' | 'total', direction: 'asc' | 'desc' } | null>(null);
+
+    // Click outside to close filter
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+                setIsFilterOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
 
     // -- Handler: Upload Student List --
     const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -369,6 +322,7 @@ const RankingView = () => {
         if(!file) return;
 
         const reader = new FileReader();
+        reader.readAsBinaryString(file); 
         reader.onload = (evt) => {
             const bstr = evt.target?.result;
             const wb = XLSX.read(bstr, { type: 'binary' });
@@ -387,13 +341,13 @@ const RankingView = () => {
 
                 const lastName = String(row[1] || '').trim();
                 const firstName = String(row[2] || '').trim();
-                const cl = String(row[3] || '').trim();
+                const cl = formatClassName(String(row[3] || ''));
                 
                 parsedStudents.push({
                     id,
                     firstName: firstName,
                     lastName: lastName,
-                    fullName: `${lastName} ${firstName}`.trim(),
+                    fullName: formatFullName(lastName, firstName),
                     class: cl
                 });
             });
@@ -401,15 +355,15 @@ const RankingView = () => {
             setStudents(parsedStudents);
             e.target.value = ''; 
         };
-        reader.readAsBinaryString(file);
     };
 
-    // -- Handler: Upload Scores --
+    // -- Handler: Upload Scores (Detailed) --
     const handleScoreUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if(!file) return;
 
         const reader = new FileReader();
+        reader.readAsBinaryString(file);
         reader.onload = (evt) => {
             const bstr = evt.target?.result;
             const wb = XLSX.read(bstr, { type: 'binary' });
@@ -452,7 +406,65 @@ const RankingView = () => {
             });
             e.target.value = '';
         };
-        reader.readAsBinaryString(file);
+    };
+
+    // --- GRADING HANDLERS ---
+    const handleMathUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        const data = await processZipGradeFile(e.target.files[0], {
+            totalQuestions: 40,
+            p1: { start: 1, end: 12, val: 0.25 },
+            ignore: [[13, 18]],
+            p2: { ranges: [[19, 22], [23, 26], [27, 30], [31, 34]] },
+            p3: { start: 35, end: 40, val: 0.5 }
+        });
+        setMathResults(data);
+        e.target.value = '';
+    };
+
+    const handleScienceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        const data = await processZipGradeFile(e.target.files[0], {
+            totalQuestions: 40,
+            p1: { start: 1, end: 18, val: 0.25 },
+            p2: { ranges: [[19, 22], [23, 26], [27, 30], [31, 34]] },
+            p3: { start: 35, end: 40, val: 0.25 }
+        });
+        setScienceResults(data);
+        e.target.value = '';
+    };
+
+    const handleITUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        const data = await processZipGradeFile(e.target.files[0], {
+            totalQuestions: 40,
+            p1: { start: 1, end: 28, val: 0.25 },
+            p2: { ranges: [[29, 32], [33, 36], [37, 40]] }
+        });
+        setItResults(data);
+        e.target.value = '';
+    };
+
+    const handleHistoryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        const data = await processZipGradeFile(e.target.files[0], {
+            totalQuestions: 40,
+            p1: { start: 1, end: 24, val: 0.25 },
+            p2: { ranges: [[25, 28], [29, 32], [33, 36], [37, 40]] }
+        });
+        setHistoryResults(data);
+        e.target.value = '';
+    };
+
+    const handleEnglishUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        const data = await processZipGradeFile(e.target.files[0], {
+            totalQuestions: 50,
+            p1: { start: 1, end: 40, val: 0.25 },
+            ignore: [[41, 50]]
+        });
+        setEnglishResults(data);
+        e.target.value = '';
     };
 
     const handleDeleteScore = () => {
@@ -480,29 +492,30 @@ const RankingView = () => {
         return stats;
     }, [students]);
 
+    // Collect all unique classes from all datasets for the filter dropdown
     const uniqueClasses = useMemo(() => {
-        if (!students) return [];
         const classes = new Set<string>();
-        students.forEach(s => {
-            if (s.class) classes.add(s.class);
-        });
+        students.forEach(s => s.class && classes.add(s.class));
+        mathResults.forEach(s => s.class && classes.add(s.class));
+        scienceResults.forEach(s => s.class && classes.add(s.class));
+        itResults.forEach(s => s.class && classes.add(s.class));
+        historyResults.forEach(s => s.class && classes.add(s.class));
+        englishResults.forEach(s => s.class && classes.add(s.class));
         return Array.from(classes).sort();
-    }, [students]);
+    }, [students, mathResults, scienceResults, itResults, historyResults, englishResults]);
 
-    // --- LOGIC XÁC ĐỊNH KHỐI ---
     const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
         const c = (className || '').toUpperCase();
-        if (c.includes('E')) return 'A1'; // "Khối A1 chứa chữ E"
-        if (c.includes('B')) return 'B';  // "lớp B" -> Khối B
-        if (c.includes('A')) return 'A';  // "lớp A" -> Khối A
+        if (c.includes('E')) return 'A1';
+        if (c.includes('B')) return 'B';
+        if (c.includes('A')) return 'A';
         return 'Other';
     };
 
     const getComputedData = useMemo(() => {
-        const filteredStudents = classFilter ? students.filter(s => s.class === classFilter) : students;
+        const filteredStudents = selectedClasses.length > 0 ? students.filter(s => selectedClasses.includes(s.class)) : students;
         if (!filteredStudents.length) return [];
 
-        // Helper: Calculate average ignoring 0s, nulls, undefined
         const calcAvg = (values: number[]) => {
             const nonZero = values.filter(v => v !== undefined && v !== null && v !== 0);
             if (nonZero.length === 0) return 0;
@@ -516,16 +529,6 @@ const RankingView = () => {
             const block = getBlockType(s.class);
             let shouldInclude = false;
 
-            // --- FILTER LOGIC ---
-            // Toán: Toàn bộ
-            // Lí: Khối A, A1
-            // Hóa: Khối A, B
-            // Sinh: Khối B
-            // Anh: Khối A1
-            // Khối A: Chỉ lớp A
-            // Khối B: Chỉ lớp B
-            // Khối A1: Chỉ lớp A1 (chứa E)
-            
             if (summaryTab === 'math') shouldInclude = true;
             else if (summaryTab === 'phys') shouldInclude = (block === 'A' || block === 'A1');
             else if (summaryTab === 'chem') shouldInclude = (block === 'A' || block === 'B');
@@ -539,15 +542,7 @@ const RankingView = () => {
             if (!shouldInclude) return;
 
             const row: any = { ...s };
-
-            // Collect scores for all exams
-            const scores = {
-                math: [] as number[],
-                phys: [] as number[],
-                chem: [] as number[],
-                bio: [] as number[],
-                eng: [] as number[]
-            };
+            const scores = { math: [] as number[], phys: [] as number[], chem: [] as number[], bio: [] as number[], eng: [] as number[] };
 
             for (let i = 1; i <= 40; i++) {
                 const record = examData[i]?.[s.id];
@@ -560,22 +555,18 @@ const RankingView = () => {
                 }
             }
 
-            // Calculate Averages for each subject (ignoring 0)
             const avgMath = calcAvg(scores.math);
             const avgPhys = calcAvg(scores.phys);
             const avgChem = calcAvg(scores.chem);
             const avgBio = calcAvg(scores.bio);
             const avgEng = calcAvg(scores.eng);
 
-            // --- CALCULATION LOGIC FOR RANKING ---
             let finalVal = 0;
-
             if (summaryTab === 'math') finalVal = avgMath;
             else if (summaryTab === 'phys') finalVal = avgPhys;
             else if (summaryTab === 'chem') finalVal = avgChem;
             else if (summaryTab === 'bio') finalVal = avgBio;
             else if (summaryTab === 'eng') finalVal = avgEng;
-            // Blocks: Sum of Averages
             else if (summaryTab === 'A') finalVal = avgMath + avgPhys + avgChem;
             else if (summaryTab === 'B') finalVal = avgMath + avgChem + avgBio;
             else if (summaryTab === 'A1') finalVal = avgMath + avgPhys + avgEng;
@@ -585,18 +576,13 @@ const RankingView = () => {
                 else if (block === 'A1') finalVal = avgMath + avgPhys + avgEng;
             }
 
-            // Populate Column Display Data (L1 -> L40)
-            // If Block Tab: Show Sum of Scores for that Exam (if present)
-            // If Subject Tab: Show Subject Score
             for (let i = 1; i <= 40; i++) {
                  const record = examData[i]?.[s.id];
                  let colVal: number | undefined = undefined;
-
                  if (record) {
                     if (['math','phys','chem','bio','eng'].includes(summaryTab)) {
                          colVal = record[summaryTab as keyof SubjectScores];
                     } else {
-                        // Block display for daily columns
                         if (summaryTab === 'A' || (summaryTab === 'total' && block === 'A')) {
                              if(record.math !== undefined && record.phys !== undefined && record.chem !== undefined) 
                                 colVal = record.math + record.phys + record.chem;
@@ -618,7 +604,7 @@ const RankingView = () => {
         });
 
         return results;
-    }, [students, examData, summaryTab, classFilter]);
+    }, [students, examData, summaryTab, selectedClasses]);
 
     const sortedData = useMemo(() => {
         if (!sortConfig) return getComputedData;
@@ -650,13 +636,241 @@ const RankingView = () => {
          return sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
     };
 
+    const handleGradingSort = (key: 'sbd' | 'name' | 'total') => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (activeSortConfig && activeSortConfig.key === key && activeSortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setActiveSortConfig({ key, direction });
+    };
+
+    const renderGradingSortIcon = (key: 'sbd' | 'name' | 'total') => {
+        if (activeSortConfig?.key !== key) return <ArrowUpDown size={12} style={{opacity:0.3}}/>;
+        return activeSortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
+    };
+
+    // Generic Sort for Grading Tables
+    const getSortedGradingResults = (results: GradingRow[]) => {
+        let data = [...results];
+        
+        // Filter by class
+        if (selectedClasses.length > 0) {
+            data = data.filter(r => selectedClasses.includes(r.class));
+        }
+
+        if (activeSortConfig) {
+            data.sort((a, b) => {
+                if (activeSortConfig.key === 'sbd') {
+                    return a.sbd.localeCompare(b.sbd, 'en', { numeric: true }) * (activeSortConfig.direction === 'asc' ? 1 : -1);
+                }
+                if (activeSortConfig.key === 'total') {
+                    return (a.totalScore - b.totalScore) * (activeSortConfig.direction === 'asc' ? 1 : -1);
+                }
+                if (activeSortConfig.key === 'name') {
+                    const res = a.firstName.localeCompare(b.firstName, 'vi');
+                    if (res !== 0) return res * (activeSortConfig.direction === 'asc' ? 1 : -1);
+                    return a.lastName.localeCompare(b.lastName, 'vi') * (activeSortConfig.direction === 'asc' ? 1 : -1);
+                }
+                return 0;
+            });
+        }
+        return data.map((item, index) => ({ ...item, stt: index + 1 }));
+    };
+
+    // --- FIX: Define activeExamScoreList ---
     const activeExamScoreList = useMemo(() => {
-        if (!students.length || !examData[activeExamTime]) return [];
-        return students.map(s => {
-            const sc = examData[activeExamTime][s.id] || {};
-            return { ...s, scores: sc };
-        }).filter(s => Object.keys(s.scores).length > 0); 
-    }, [students, examData, activeExamTime]);
+        let list = students;
+        if (selectedClasses.length > 0) {
+            list = list.filter(s => selectedClasses.includes(s.class));
+        }
+        return list.map(s => ({
+            ...s,
+            scores: examData[activeExamTime]?.[s.id] || {}
+        }));
+    }, [students, selectedClasses, examData, activeExamTime]);
+    // ---------------------------------------
+
+    const renderMultiSelect = () => (
+        <div style={{ position: 'relative' }} ref={filterRef}>
+            <button
+                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                style={{
+                    padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white',
+                    fontSize: '13px', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '150px'
+                }}
+            >
+                <Filter size={14} />
+                {selectedClasses.length === 0 ? "Tất cả các lớp" : `Đang chọn ${selectedClasses.length} lớp`}
+            </button>
+            
+            {isFilterOpen && (
+                <div style={{
+                    position: 'absolute', top: '100%', left: 0, marginTop: '5px', background: 'white',
+                    border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                    zIndex: 100, width: '250px', maxHeight: '300px', overflowY: 'auto', padding: '10px'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '12px' }}>
+                        <span 
+                            style={{ cursor: 'pointer', color: '#3b82f6', fontWeight: 600 }}
+                            onClick={() => setSelectedClasses(uniqueClasses)}
+                        >
+                            Chọn tất cả
+                        </span>
+                        <span 
+                            style={{ cursor: 'pointer', color: '#64748b' }}
+                            onClick={() => setSelectedClasses([])}
+                        >
+                            Bỏ chọn
+                        </span>
+                    </div>
+                    {uniqueClasses.map(cls => (
+                        <div key={cls} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', fontSize: '13px' }}>
+                            <input
+                                type="checkbox"
+                                id={`filter-${cls}`}
+                                checked={selectedClasses.includes(cls)}
+                                onChange={(e) => {
+                                    if (e.target.checked) setSelectedClasses(prev => [...prev, cls]);
+                                    else setSelectedClasses(prev => prev.filter(c => c !== cls));
+                                }}
+                                style={{ cursor: 'pointer' }}
+                            />
+                            <label htmlFor={`filter-${cls}`} style={{ cursor: 'pointer', flex: 1 }}>{cls}</label>
+                        </div>
+                    ))}
+                    {uniqueClasses.length === 0 && <div style={{ color: '#94a3b8', fontSize: '13px' }}>Không có lớp nào</div>}
+                </div>
+            )}
+        </div>
+    );
+
+    // Helper to render grading table
+    const renderGradingTable = (results: GradingRow[], id: string, title: string, questionCount: number) => {
+        const sorted = getSortedGradingResults(results);
+        
+        // Calculate Statistics
+        const scores = sorted.map(s => s.totalScore);
+        const count = scores.length;
+        const max = count > 0 ? Math.max(...scores) : 0;
+        const min = count > 0 ? Math.min(...scores) : 0;
+        const avg = count > 0 ? (scores.reduce((a, b) => a + b, 0) / count).toFixed(2) : 0;
+
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                <div style={{ padding: '16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                     <div>
+                         <h3 style={{ margin: '0 0 4px 0', color: '#1e293b' }}>{title}</h3>
+                         <div style={{ display: 'flex', gap: '12px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+                            <span>Sĩ số: <span style={{color: '#1e293b'}}>{count}</span></span>
+                            <span>TB: <span style={{color: '#059669'}}>{avg}</span></span>
+                            <span>Cao nhất: <span style={{color: '#059669'}}>{max}</span></span>
+                            <span>Thấp nhất: <span style={{color: '#ef4444'}}>{min}</span></span>
+                         </div>
+                     </div>
+                     
+                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                        {renderMultiSelect()}
+                        
+                        <label style={{ 
+                                padding: '10px 20px', background: '#3b82f6', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            }}>
+                                <Upload size={18} /> Tải file ZipGrade
+                                <input type="file" accept=".xlsx,.xls,.csv" hidden onChange={
+                                    id === 'math' ? handleMathUpload :
+                                    id === 'science' ? handleScienceUpload :
+                                    id === 'it' ? handleITUpload :
+                                    id === 'history' ? handleHistoryUpload :
+                                    handleEnglishUpload
+                                } />
+                        </label>
+
+                        <button
+                               onClick={() => exportToExcel(`${id}-table`, `Diem_${id}`)}
+                               style={{
+                                  padding: '10px 20px', borderRadius: '8px', background: '#059669', border: 'none',
+                                  cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
+                                  display: 'flex', alignItems: 'center', gap: '8px'
+                               }}
+                             >
+                               <FileDown size={18} /> Xuất Excel
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ flex: 1, overflow: 'auto' }}>
+                    <table id={`${id}-table`} style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1500px' }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
+                            <tr>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '40px' }}>STT</th>
+                                <th rowSpan={2} onClick={() => handleGradingSort('sbd')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', textAlign: 'left', width: '80px', cursor: 'pointer' }}>
+                                    <div style={{display:'flex', alignItems:'center', gap:'4px'}}>SBD {renderGradingSortIcon('sbd')}</div>
+                                </th>
+                                <th rowSpan={2} onClick={() => handleGradingSort('name')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', textAlign: 'left', minWidth: '180px', cursor: 'pointer' }}>
+                                    <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderGradingSortIcon('name')}</div>
+                                </th>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '60px' }}>Lớp</th>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '60px' }}>Mã đề</th>
+                                <th rowSpan={2} onClick={() => handleGradingSort('total')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#fef3c7', fontWeight: 800, color: '#b45309', cursor: 'pointer' }}>
+                                    <div style={{display:'flex', alignItems:'center', gap:'4px', justifyContent: 'center'}}>Tổng {renderGradingSortIcon('total')}</div>
+                                </th>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P1</th>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P2</th>
+                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P3</th>
+                                <th colSpan={questionCount} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', textAlign: 'center' }}>Chi tiết câu hỏi</th>
+                            </tr>
+                            <tr>
+                                {Array.from({length: questionCount}, (_, i) => i + 1).map(num => {
+                                    return (
+                                        <th key={num} style={{ 
+                                            padding: '4px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', 
+                                            width: '35px', fontSize: '11px', color: '#64748b'
+                                        }}>
+                                            {num}
+                                        </th>
+                                    );
+                                })}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sorted.length > 0 ? sorted.map((row, idx) => (
+                                <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.stt}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 600, color: '#475569' }}>{row.sbd}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.fullName}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.class}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.examCode}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#fffbeb', fontWeight: 700, color: '#b45309' }}>{row.totalScore}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p1Score}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p2Score}</td>
+                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p3Score}</td>
+                                    
+                                    {Array.from({length: questionCount}, (_, i) => i + 1).map(num => {
+                                        const ans = row.answers[num];
+                                        if (ans.isIgnored) {
+                                            return <td key={num} style={{ padding: '6px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', color: '#cbd5e1', background: '#f8fafc' }}>{ans.val || '-'}</td>;
+                                        }
+                                        if (ans.isCorrect) {
+                                            return <td key={num} style={{ borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}></td>;
+                                        }
+                                        return (
+                                            <td key={num} style={{ padding: '6px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#fee2e2', color: '#b91c1c', fontWeight: 600 }}>
+                                                {ans.val}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            )) : (
+                                <tr>
+                                    <td colSpan={50} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Chưa có dữ liệu. Vui lòng tải file từ ZipGrade.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div style={{ display: 'flex', height: '100%', background: '#f8fafc', overflow: 'hidden' }}>
@@ -705,6 +919,63 @@ const RankingView = () => {
                     }}
                 >
                     <Sigma size={18} /> Sort Ngang
+                </button>
+                <div style={{ height: '1px', background: '#e2e8f0', margin: '10px 0' }}></div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '10px' }}>Công cụ Chấm</div>
+                <button 
+                    onClick={() => setSubTab('math-grading')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'math-grading' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'math-grading' ? '#1d4ed8' : '#64748b', fontWeight: subTab === 'math-grading' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Calculator size={18} /> Điểm Toán
+                </button>
+                <button 
+                    onClick={() => setSubTab('science-grading')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'science-grading' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'science-grading' ? '#0891b2' : '#64748b', fontWeight: subTab === 'science-grading' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Atom size={18} /> Lý, Hóa, Sinh
+                </button>
+                <button 
+                    onClick={() => setSubTab('it-grading')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'it-grading' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'it-grading' ? '#7c3aed' : '#64748b', fontWeight: subTab === 'it-grading' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Monitor size={18} /> Điểm Tin
+                </button>
+                <button 
+                    onClick={() => setSubTab('history-grading')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'history-grading' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'history-grading' ? '#c2410c' : '#64748b', fontWeight: subTab === 'history-grading' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <ScrollText size={18} /> Điểm Sử
+                </button>
+                <button 
+                    onClick={() => setSubTab('english-grading')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'english-grading' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'english-grading' ? '#15803d' : '#64748b', fontWeight: subTab === 'english-grading' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Globe size={18} /> Điểm Anh
                 </button>
             </div>
 
@@ -899,46 +1170,8 @@ const RankingView = () => {
                                  </button>
                              ))}
                              
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '16px', paddingLeft: '16px', borderLeft: '1px solid #e2e8f0' }}>
-                                <Filter size={14} color="#64748b" />
-                                <select
-                                    value={classFilter}
-                                    onChange={(e) => setClassFilter(e.target.value)}
-                                    style={{
-                                        padding: '8px 12px',
-                                        borderRadius: '6px',
-                                        border: '1px solid #cbd5e1',
-                                        background: 'white',
-                                        fontSize: '13px',
-                                        color: '#475569',
-                                        cursor: 'pointer',
-                                        outline: 'none',
-                                        minWidth: '150px'
-                                    }}
-                                >
-                                    <option value="">Tất cả các lớp</option>
-                                    {uniqueClasses.map(cls => <option key={cls} value={cls}>{cls}</option>)}
-                                </select>
-                                {classFilter && (
-                                    <button
-                                        onClick={() => setClassFilter('')}
-                                        aria-label="Xóa bộ lọc lớp"
-                                        style={{
-                                            background: 'transparent',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: '#94a3b8',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            padding: '4px'
-                                        }}
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                )}
-                            </div>
-
-                             <div style={{ marginLeft: 'auto' }}>
+                             <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                {renderMultiSelect()}
                                  <button
                                    onClick={() => exportToExcel('summary-table', `Tong_Ket_${summaryTab}`)}
                                    style={{
@@ -1027,931 +1260,19 @@ const RankingView = () => {
                         </div>
                     </div>
                 )}
+                
+                {subTab === 'math-grading' && renderGradingTable(mathResults, 'math', 'Chấm Điểm Toán (40 Câu)', 40)}
+                {subTab === 'science-grading' && renderGradingTable(scienceResults, 'science', 'Chấm Điểm KHTN (Lý/Hóa/Sinh)', 40)}
+                {subTab === 'it-grading' && renderGradingTable(itResults, 'it', 'Chấm Điểm Tin Học (40 Câu)', 40)}
+                {subTab === 'history-grading' && renderGradingTable(historyResults, 'history', 'Chấm Điểm Lịch Sử (40 Câu)', 40)}
+                {subTab === 'english-grading' && renderGradingTable(englishResults, 'english', 'Chấm Điểm Tiếng Anh (50 Câu)', 50)}
 
             </div>
         </div>
     );
 };
 
-
-// --- Main App Component ---
-
-const App = () => {
-  const [activeSubject, setActiveSubject] = useState<string>('math');
-  const [activeTab, setActiveTab] = useState<'stats' | 'create'>('stats');
-  
-  const [data, setData] = useState<any[] | null>(null);
-  const [processedResults, setProcessedResults] = useState<StudentResult[] | null>(null);
-  const [stats, setStats] = useState<QuestionStat[] | null>(null);
-  const [fileName, setFileName] = useState<string>("");
-
-  const [statsPartFilter, setStatsPartFilter] = useState<'all' | 'p1' | 'p2' | 'p3'>('all');
-
-  const [questionCounts, setQuestionCounts] = useState<Record<number, number>>({});
-
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-
-  const [thresholds, setThresholds] = useState<ThresholdConfig>(() => {
-    const saved = localStorage.getItem('thresholds');
-    return saved ? JSON.parse(saved) : { lowCount: 5, highPercent: 40 };
-  });
-
-  const [customColors, setCustomColors] = useState<ColorConfig>(() => {
-    const saved = localStorage.getItem('customColors');
-    return saved ? JSON.parse(saved) : { lowError: DEFAULT_COLORS.yellow, highError: DEFAULT_COLORS.red };
-  });
-
-  const [examFile, setExamFile] = useState<DocFile | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedExam, setGeneratedExam] = useState<string>("");
-
-  const [showSettings, setShowSettings] = useState(false);
-  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
-  const [showKey, setShowKey] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem('gemini_api_key', userApiKey);
-  }, [userApiKey]);
-
-  useEffect(() => {
-    localStorage.setItem('thresholds', JSON.stringify(thresholds));
-  }, [thresholds]);
-
-  useEffect(() => {
-    localStorage.setItem('customColors', JSON.stringify(customColors));
-  }, [customColors]);
-
-  const handleDataUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setFileName(file.name);
-    const reader = new FileReader();
-
-    const processBinary = (bstr: string | ArrayBuffer) => {
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const jsonData = XLSX.utils.sheet_to_json(ws);
-      setData(jsonData);
-      
-      const { results, stats } = processData(jsonData, activeSubject as any);
-      setProcessedResults(results);
-      setStats(stats);
-      setSortConfig(null);
-    };
-
-    if (file.name.toLowerCase().endsWith('.csv')) {
-        reader.onload = (evt) => {
-            const text = evt.target?.result as string;
-            const wb = XLSX.read(text, { type: 'string' });
-            const wsname = wb.SheetNames[0];
-            const ws = wb.Sheets[wsname];
-            const jsonData = XLSX.utils.sheet_to_json(ws);
-            setData(jsonData);
-            
-            const { results, stats } = processData(jsonData, activeSubject as any);
-            setProcessedResults(results);
-            setStats(stats);
-            setSortConfig(null);
-        }
-        reader.readAsText(file, 'UTF-8');
-    } else {
-        reader.onload = (evt) => {
-            const bstr = evt.target?.result;
-            if (bstr) processBinary(bstr);
-        };
-        reader.readAsBinaryString(file);
-    }
-    
-    e.target.value = ''; 
-  };
-
-  useEffect(() => {
-    if (data && activeSubject !== 'ranking') {
-      const { results, stats: newStats } = processData(data, activeSubject as any);
-      setProcessedResults(results);
-      setStats(newStats);
-      setQuestionCounts({}); 
-    }
-  }, [activeSubject]);
-
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
-  };
-
-  const sortedResults = useMemo(() => {
-    if (!processedResults) return [];
-    if (!sortConfig) return processedResults;
-
-    const sorted = [...processedResults];
-    sorted.sort((a, b) => {
-      let aVal: any = '';
-      let bVal: any = '';
-
-      if (sortConfig.key === 'name') {
-        aVal = a.firstName; 
-        bVal = b.firstName;
-      } else if (sortConfig.key === 'sbd') {
-        aVal = a.sbd;
-        bVal = b.sbd;
-      } else if (sortConfig.key === 'total') {
-        aVal = a.scores.total;
-        bVal = b.scores.total;
-      } else if (sortConfig.key === 'p1') {
-        aVal = a.scores.p1;
-        bVal = b.scores.p1;
-      } else if (sortConfig.key === 'p2') {
-        aVal = a.scores.p2;
-        bVal = b.scores.p2;
-      } else if (sortConfig.key === 'p3') {
-        aVal = a.scores.p3;
-        bVal = b.scores.p3;
-      }
-
-      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-    return sorted;
-  }, [processedResults, sortConfig]);
-
-  const summaryStats = useMemo(() => {
-    if (!processedResults || processedResults.length === 0) return { min: 0, max: 0, avg: 0 };
-    const scores = processedResults.map(r => r.scores.total);
-    const min = Math.min(...scores);
-    const max = Math.max(...scores);
-    const sum = scores.reduce((a, b) => a + b, 0);
-    const avg = parseFloat((sum / scores.length).toFixed(2));
-    return { min, max, avg };
-  }, [processedResults]);
-
-  const filteredWrongStats = useMemo(() => {
-      if (!stats) return [];
-      const config = SUBJECTS_CONFIG[activeSubject];
-      if (!config) return [];
-
-      return stats.filter(s => {
-          if (s.wrongPercent < thresholds.highPercent) return false;
-          if (statsPartFilter === 'all') return true;
-          
-          const idx = s.index;
-          if (statsPartFilter === 'p1') {
-              return idx >= config.parts.p1.start && idx <= config.parts.p1.end;
-          }
-          if (statsPartFilter === 'p2') {
-              return idx >= config.parts.p2.start && idx <= config.parts.p2.end;
-          }
-          if (statsPartFilter === 'p3') {
-              return idx >= config.parts.p3.start && idx <= config.parts.p3.end;
-          }
-          return false;
-      }).sort((a,b) => b.wrongCount - a.wrongCount);
-  }, [stats, statsPartFilter, thresholds.highPercent, activeSubject]);
-
-  const updateQuestionCount = (index: number, val: number) => {
-      setQuestionCounts(prev => ({ ...prev, [index]: val }));
-  };
-
-  const handleExamFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    let content = "";
-    if (file.type === "application/pdf") {
-      content = await fileToBase64(file);
-    } else if (file.name.endsWith(".docx") || file.name.endsWith(".doc")) {
-      content = await extractTextFromDocx(file);
-    } else {
-      const reader = new FileReader();
-      content = await new Promise((resolve) => {
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.readAsText(file);
-      });
-    }
-    setExamFile({ id: 'exam_orig', name: file.name, content, type: file.type === "application/pdf" ? 'pdf' : 'text' });
-  };
-
-  const generatePracticeExam = async () => {
-    if (!examFile || !stats) return;
-    setIsGenerating(true);
-
-    try {
-      const apiKey = userApiKey || process.env.API_KEY || '';
-      const ai = new GoogleGenAI({ apiKey: apiKey });
-      
-      const requestDetails = filteredWrongStats.map(s => {
-          const label = getPart2Label(s.index, activeSubject);
-          const count = questionCounts[s.index] || 5; 
-          return `- Dạng bài câu ${label}: tạo ${count} câu.`;
-      }).join('\n');
-      
-      const prompt = `
-        Bạn là một giáo viên chuyên nghiệp. Dưới đây là nội dung của một đề thi gốc và yêu cầu tạo đề ôn tập dựa trên các câu học sinh làm sai nhiều nhất.
-        
-        Nhiệm vụ:
-        Phân tích nội dung kiến thức của các câu hỏi trong đề gốc được liệt kê bên dưới, sau đó tạo nội dung theo cấu trúc sau:
-
-        CẤU TRÚC TRẢ VỀ (Bắt buộc):
-        
-        1. **Đề gốc**:
-           - Trích xuất nội dung các câu hỏi gốc bị sai nhiều từ file đề (Các câu tương ứng với danh sách yêu cầu bên dưới).
-        
-        2. **Đáp án đề gốc**:
-           - Chỉ ghi đáp án trắc nghiệm của các câu gốc đó (Ví dụ: 1.A, 2.C, 3.D...). Không ghi lời giải.
-        
-        3. **Đề ôn tập**:
-           - Tạo các câu hỏi rèn luyện tương tự (đổi số liệu, giữ nguyên dạng bài) cho từng câu sai.
-           - Số lượng câu hỏi cho từng dạng bài tuân thủ theo danh sách:
-           ${requestDetails}
-        
-        4. **Đáp án đề ôn tập**:
-           - Chỉ ghi đáp án trắc nghiệm của các câu hỏi rèn luyện này (Ví dụ: 1.A, 2.B...). Tuyệt đối không đưa ra lời giải chi tiết.
-        
-        YÊU CẦU ĐỊNH DẠNG LATEX (TUYỆT ĐỐI TUÂN THỦ):
-        1. Tất cả công thức toán học, vật lý, hóa học phải đặt trong cặp dấu $...$.
-        2. Ký hiệu Hy Lạp: ρ -> \\rho, θ -> \\theta, α -> \\alpha, β -> \\beta, Δ -> \\Delta, μ -> \\mu, λ -> \\lambda.
-        3. Độ C: ◦C -> ^\\circ C. Ví dụ: 300◦C -> $300^\\circ C$, -23◦C -> $-23^\\circ C$.
-        4. Phần trăm: % -> \\%.
-        5. Đơn vị đo lường: Thêm khoảng cách \\; trước đơn vị.
-           - Ví dụ: 50 cm -> $50\\;cm$
-           - Ví dụ: 100g -> $100\\;g$
-        
-        Nội dung đề gốc:
-        ${examFile.type === 'text' ? examFile.content : '(Xem PDF đính kèm)'}
-      `;
-
-      const parts: any[] = [{ text: prompt }];
-      if (examFile.type === 'pdf') {
-        parts.push({ inlineData: { mimeType: 'application/pdf', data: examFile.content } });
-      }
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts }
-      });
-
-      if (response.text) {
-        setGeneratedExam(response.text);
-      }
-    } catch (e: any) {
-      alert("Lỗi AI: " + e.message);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const getCellColor = (wrongCount: number, wrongPercent: number) => {
-    if (wrongCount === 0) return DEFAULT_COLORS.blue; 
-    if (wrongPercent > thresholds.highPercent) return customColors.highError; 
-    if (wrongCount < thresholds.lowCount) return customColors.lowError; 
-    return 'white';
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 8) return '#16a34a'; 
-    if (score >= 5) return '#ca8a04'; 
-    return '#dc2626'; 
-  };
-
-  const renderSortIcon = (key: string) => {
-    if (!sortConfig || sortConfig.key !== key) return <ArrowUpDown size={12} style={{ opacity: 0.3 }} />;
-    return sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
-  };
-
-  // --- UI RENDER ---
-
-  if (showSettings) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-         <div style={{ background: 'white', borderRadius: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)', width: '600px', overflow: 'hidden' }}>
-             <div style={{ background: '#1e3a8a', padding: '20px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                 <h2 style={{ margin: 0, color: 'white', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Settings size={20} /> Cài đặt hệ thống
-                 </h2>
-                 <button onClick={() => setShowSettings(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', borderRadius: '50%', padding: '6px', cursor: 'pointer', display: 'flex' }}>
-                    <X size={18} />
-                 </button>
-             </div>
-
-             <div style={{ padding: '30px', maxHeight: '70vh', overflowY: 'auto' }}>
-                 
-                 <div style={{ marginBottom: '30px', background: '#eff6ff', padding: '20px', borderRadius: '16px', display: 'flex', gap: '20px', alignItems: 'center' }}>
-                     <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#3b82f6', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 'bold' }}>H</div>
-                     <div>
-                         <h3 style={{ margin: '0 0 5px 0', color: '#1e3a8a', fontSize: '18px' }}>Nguyễn Đức Hiền</h3>
-                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1d4ed8', fontSize: '14px', marginBottom: '4px' }}>
-                             <User size={14} /> Giáo viên Vật Lí
-                         </div>
-                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748b', fontSize: '13px' }}>
-                             <School size={14} /> Trường THCS và THPT Nguyễn Khuyến Bình Dương
-                         </div>
-                     </div>
-                 </div>
-
-                 <div style={{ marginBottom: '30px' }}>
-                    <h4 style={{ margin: '0 0 15px 0', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                         <Filter size={16} /> Cấu hình hiển thị thống kê
-                    </h4>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-                       <div>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                             Ngưỡng sai ít (Số lượng)
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                             <span style={{ fontSize: '13px', color: '#64748b' }}>&lt;</span>
-                             <input 
-                                type="number" 
-                                value={thresholds.lowCount}
-                                onChange={(e) => setThresholds({...thresholds, lowCount: parseInt(e.target.value) || 0})}
-                                style={{ width: '60px', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                             />
-                             <span style={{ fontSize: '13px', color: '#64748b' }}>học sinh</span>
-                          </div>
-                       </div>
-                       <div>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                             Ngưỡng sai nhiều (Tỷ lệ %)
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                             <span style={{ fontSize: '13px', color: '#64748b' }}>&gt;</span>
-                             <input 
-                                type="number" 
-                                value={thresholds.highPercent}
-                                onChange={(e) => setThresholds({...thresholds, highPercent: parseInt(e.target.value) || 0})}
-                                style={{ width: '60px', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                             />
-                             <span style={{ fontSize: '13px', color: '#64748b' }}>%</span>
-                          </div>
-                       </div>
-                    </div>
-
-                    <h4 style={{ margin: '0 0 15px 0', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                         <Palette size={16} /> Màu sắc hiển thị
-                    </h4>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                        <div>
-                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                              Màu báo sai ít (Mặc định: Vàng)
-                           </label>
-                           <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
-                               <input 
-                                  type="color" 
-                                  value={customColors.lowError}
-                                  onChange={(e) => setCustomColors({...customColors, lowError: e.target.value})}
-                                  style={{ height: '36px', width: '60px', padding: '0', border: 'none', cursor: 'pointer', borderRadius: '4px' }}
-                               />
-                               <span style={{fontSize:'12px', color:'#64748b', fontFamily:'monospace'}}>{customColors.lowError}</span>
-                           </div>
-                        </div>
-                        <div>
-                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                              Màu báo sai nhiều (Mặc định: Đỏ)
-                           </label>
-                           <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
-                               <input 
-                                  type="color" 
-                                  value={customColors.highError}
-                                  onChange={(e) => setCustomColors({...customColors, highError: e.target.value})}
-                                  style={{ height: '36px', width: '60px', padding: '0', border: 'none', cursor: 'pointer', borderRadius: '4px' }}
-                               />
-                               <span style={{fontSize:'12px', color:'#64748b', fontFamily:'monospace'}}>{customColors.highError}</span>
-                           </div>
-                        </div>
-                    </div>
-                 </div>
-
-                 <div>
-                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 600, color: '#334155', fontSize: '15px' }}>
-                         Google Gemini API Key
-                     </label>
-                     <div style={{ position: 'relative' }}>
-                         <input 
-                             type={showKey ? "text" : "password"} 
-                             value={userApiKey}
-                             onChange={(e) => setUserApiKey(e.target.value)}
-                             placeholder="Nhập API Key của bạn tại đây..."
-                             style={{ 
-                                 width: '100%', padding: '14px 50px 14px 16px', borderRadius: '12px', border: '1px solid #cbd5e1', 
-                                 fontSize: '16px', outline: 'none', transition: 'border 0.2s', background: 'white', color: '#1e293b'
-                             }}
-                             onFocus={(e) => e.target.style.borderColor = '#2563eb'}
-                             onBlur={(e) => e.target.style.borderColor = '#cbd5e1'}
-                         />
-                         <button 
-                            onClick={() => setShowKey(!showKey)} 
-                            style={{ 
-                                position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', 
-                                background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '5px' 
-                            }}>
-                            {showKey ? <EyeOff size={20}/> : <Eye size={20}/>}
-                         </button>
-                     </div>
-                     <p style={{ marginTop: '10px', fontSize: '13px', color: '#64748b' }}>
-                        API Key sẽ được lưu trên trình duyệt của bạn để sử dụng cho các lần sau.
-                     </p>
-                 </div>
-
-             </div>
-
-             <div style={{ padding: '20px 30px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
-                 <button 
-                    onClick={() => setShowSettings(false)} 
-                    style={{ 
-                        padding: '10px 24px', background: '#1e3a8a', color: 'white', borderRadius: '8px', border: 'none', 
-                        cursor: 'pointer', fontWeight: 600, fontSize: '14px', boxShadow: '0 4px 6px -1px rgba(30, 58, 138, 0.2)'
-                    }}>
-                    Đóng
-                 </button>
-             </div>
-         </div>
-      </div>
-    );
-  }
-
-  const p2Range = SUBJECTS_CONFIG[activeSubject] ? SUBJECTS_CONFIG[activeSubject].parts.p2 : { start: 0, end: 0 };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#f8fafc' }}>
-      
-      <header style={{ height: '64px', background: '#1e3a8a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', color: 'white', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontWeight: 700, fontSize: '18px' }}>
-              <div style={{ width: '36px', height: '36px', background: 'white', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1e3a8a' }}>
-                  <FileSpreadsheet size={20} />
-              </div>
-              <div>
-                  <div style={{ lineHeight: '1.2' }}>THỐNG KÊ CÂU SAI</div>
-                  <div style={{ fontSize: '16px', color: '#93c5fd', fontWeight: 500 }}>NK12</div>
-              </div>
-          </div>
-          
-          <button 
-              onClick={() => setShowSettings(true)}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: '8px', padding: '8px', cursor: 'pointer', display: 'flex' }}
-          >
-              <Settings size={20} />
-          </button>
-      </header>
-
-      <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '12px 24px', display: 'flex', gap: '10px', overflowX: 'auto' }}>
-          {Object.values(SUBJECTS_CONFIG).map(subj => {
-              const isActive = activeSubject === subj.id;
-              return (
-                <button
-                  key={subj.id}
-                  onClick={() => setActiveSubject(subj.type)}
-                  style={{
-                      display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', 
-                      borderRadius: '99px', 
-                      border: 'none', cursor: 'pointer', 
-                      background: isActive ? '#1e3a8a' : '#f1f5f9',
-                      color: isActive ? 'white' : '#64748b',
-                      fontWeight: isActive ? 600 : 500,
-                      transition: 'all 0.2s ease',
-                      fontSize: '14px',
-                      boxShadow: isActive ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none'
-                  }}
-                >
-                  {subj.id === 'math' && <Calculator size={18} />}
-                  {subj.id === 'science' && <FlaskConical size={18} />}
-                  {subj.id === 'english' && <Languages size={18} />}
-                  {subj.id === 'it' && <Monitor size={18} />}
-                  {subj.id === 'history' && <Hourglass size={18} />}
-                  <span>{subj.name}</span>
-                </button>
-              );
-          })}
-          
-          <button
-            onClick={() => setActiveSubject('ranking')}
-            style={{
-                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', 
-                borderRadius: '99px',
-                border: 'none', cursor: 'pointer', 
-                background: activeSubject === 'ranking' ? '#1e3a8a' : '#f1f5f9',
-                color: activeSubject === 'ranking' ? 'white' : '#64748b',
-                fontWeight: activeSubject === 'ranking' ? 600 : 500,
-                transition: 'all 0.2s ease',
-                fontSize: '14px',
-                boxShadow: activeSubject === 'ranking' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none'
-            }}
-          >
-            <Award size={18} />
-            <span>Tổng kết và Xếp hạng</span>
-          </button>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          
-          {activeSubject !== 'ranking' && (
-              <div style={{ padding: '15px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                      <button 
-                        onClick={() => setActiveTab('stats')}
-                        style={{ 
-                            padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                            background: activeTab === 'stats' ? '#1e3a8a' : '#e2e8f0',
-                            color: activeTab === 'stats' ? 'white' : '#64748b',
-                            boxShadow: activeTab === 'stats' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
-                            display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
-                        }}>
-                        <TableIcon size={16} /> Thống kê điểm
-                      </button>
-                      <button 
-                        onClick={() => setActiveTab('create')}
-                        style={{ 
-                            padding: '10px 20px', borderRadius: '99px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                            background: activeTab === 'create' ? '#1e3a8a' : '#e2e8f0',
-                            color: activeTab === 'create' ? 'white' : '#64748b',
-                            boxShadow: activeTab === 'create' ? '0 4px 6px -1px rgba(30, 58, 138, 0.2)' : 'none',
-                            display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s'
-                        }}>
-                        <BrainCircuit size={16} /> Phân tích AI
-                      </button>
-                  </div>
-
-                  {activeTab === 'stats' && (
-                      <div style={{ display: 'flex', gap: '10px' }}>
-                         {stats && (
-                            <button
-                               onClick={() => exportToExcel('stats-table', fileName)}
-                               style={{
-                                  padding: '10px 20px', borderRadius: '99px', background: '#2563eb', border: 'none',
-                                  cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
-                                  display: 'flex', alignItems: 'center', gap: '8px',
-                                  boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
-                               }}
-                            >
-                               <FileDown size={16} /> Tải file Excel
-                            </button>
-                         )}
-                         <button
-                            onClick={() => document.getElementById('re-upload')?.click()}
-                            style={{
-                               padding: '10px 20px', borderRadius: '99px', background: 'white', border: '1px solid #cbd5e1',
-                               cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569',
-                               display: 'flex', alignItems: 'center', gap: '8px',
-                               boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}
-                         >
-                            <RefreshCw size={16} /> Tải file khác
-                         </button>
-                         <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="re-upload" />
-                      </div>
-                  )}
-              </div>
-          )}
-
-          <div style={{ flex: 1, overflow: 'auto', padding: activeSubject === 'ranking' ? 0 : '0 24px 24px 24px' }}>
-             
-                {activeSubject === 'ranking' ? (
-                    <RankingView />
-                ) : (
-                    <>
-                    {activeTab === 'stats' && (
-                        <div style={{ animation: 'fadeIn 0.3s ease-out', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                            {!stats && (
-                               <div style={{ 
-                                    padding: '60px', background: 'white', borderRadius: '16px', border: '2px dashed #cbd5e1', 
-                                    textAlign: 'center', transition: 'border-color 0.2s', maxWidth: '600px', margin: '40px auto'
-                                }}
-                                onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#3b82f6'; }}
-                                onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
-                                onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#cbd5e1'; }}
-                                >
-                                    <input type="file" accept=".xlsx,.csv" onChange={handleDataUpload} style={{ display: 'none' }} id="data-upload" />
-                                    <label htmlFor="data-upload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                                        <div style={{ width: '80px', height: '80px', background: '#eff6ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            <Upload size={36} color="#3b82f6" />
-                                        </div>
-                                        <div>
-                                            <div style={{ fontSize: '18px', fontWeight: 600, color: '#1e293b' }}>
-                                                Tải lên file ZipGrade
-                                            </div>
-                                            <div style={{ fontSize: '14px', color: '#64748b', marginTop: '6px' }}>Hỗ trợ định dạng Excel (.xlsx) hoặc CSV</div>
-                                        </div>
-                                    </label>
-                                </div>
-                            )}
-
-                            {processedResults && stats && (
-                                <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', height: '100%', border: '1px solid #e2e8f0' }}>
-                                    <div style={{ padding: '12px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' }}>
-                                        <div style={{ display: 'flex', gap: '24px', fontSize: '13px', fontWeight: 500, alignItems: 'center' }}>
-                                            <div style={{ display: 'flex', gap: '15px', borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
-                                                <div style={{ 
-                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                                }}>
-                                                    <span style={{width:'12px', height:'12px', background: DEFAULT_COLORS.blue, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                    0 Sai
-                                                </div>
-                                                <div style={{ 
-                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                                }}>
-                                                    <span style={{width:'12px', height:'12px', background: customColors.lowError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                    &lt;{thresholds.lowCount} Sai
-                                                </div>
-                                                <div style={{ 
-                                                    display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 8px', borderRadius: '6px', 
-                                                    background: 'white', border: '1px solid #e2e8f0', color: '#1e3a8a', fontWeight: 600
-                                                }}>
-                                                    <span style={{width:'12px', height:'12px', background: customColors.highError, borderRadius:'2px', border:'1px solid #cbd5e1'}}></span> 
-                                                    &gt;{thresholds.highPercent}% Sai
-                                                </div>
-                                            </div>
-                                            <div style={{ display: 'flex', gap: '15px', color: '#334155' }}>
-                                                <div>TB: <strong>{summaryStats.avg}</strong></div>
-                                                <div>Max: <strong style={{color:'#16a34a'}}>{summaryStats.max}</strong></div>
-                                                <div>Min: <strong style={{color:'#dc2626'}}>{summaryStats.min}</strong></div>
-                                            </div>
-                                        </div>
-                                        <div style={{ fontSize: '13px', color: '#64748b' }}>
-                                            File: <strong>{fileName}</strong>
-                                        </div>
-                                    </div>
-
-                                    <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
-                                        <table id="stats-table" style={{ width: '100%', fontSize: '12px', borderCollapse: 'separate', borderSpacing: 0, minWidth: '1500px' }}>
-                                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                                                <tr style={{ background: '#f1f5f9' }}>
-                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', width: '40px' }}>STT</th>
-                                                    <th onClick={() => handleSort('sbd')} style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
-                                                       <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>SBD {renderSortIcon('sbd')}</div>
-                                                    </th>
-                                                    <th onClick={() => handleSort('name')} style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f1f5f9', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', cursor: 'pointer', userSelect: 'none', minWidth: '220px' }}>
-                                                       <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderSortIcon('name')}</div>
-                                                    </th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}>Mã</th>
-                                                    <th onClick={() => handleSort('total')} style={{ borderBottom: '1px solid #cbd5e1', cursor: 'pointer', userSelect: 'none' }}>
-                                                       <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}>Điểm {renderSortIcon('total')}</div>
-                                                    </th>
-                                                    <th onClick={() => handleSort('p1')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P1 {renderSortIcon('p1')}</th>
-                                                    <th onClick={() => handleSort('p2')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', cursor: 'pointer', userSelect: 'none' }}>P2 {renderSortIcon('p2')}</th>
-                                                    <th onClick={() => handleSort('p3')} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '10px', borderRight: '2px solid #94a3b8', cursor: 'pointer', userSelect: 'none' }}>P3 {renderSortIcon('p3')}</th>
-                                                    {stats.map(s => {
-                                                       const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
-                                                       return (
-                                                        <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', minWidth: '24px', background: isPart2 ? '#fefce8' : '#f1f5f9' }}>
-                                                            {getPart2Label(s.index, activeSubject as any)}
-                                                        </th>
-                                                       );
-                                                    })}
-                                                </tr>
-                                                
-                                                <tr style={{ background: '#e2e8f0' }}>
-                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#e2e8f0', borderRight: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', textAlign: 'left', paddingLeft: '10px', color: '#475569', fontSize: '11px', minWidth: '220px' }}>Đáp án đúng</th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1' }}></th>
-                                                    <th style={{ borderBottom: '1px solid #cbd5e1', borderRight: '2px solid #94a3b8' }}></th>
-                                                    {stats.map(s => {
-                                                       const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
-                                                       return (
-                                                        <th key={s.index} style={{ borderBottom: '1px solid #cbd5e1', fontSize: '11px', color: '#16a34a', background: isPart2 ? '#fefce8' : '#e2e8f0' }}>
-                                                            {s.correctKey}
-                                                        </th>
-                                                       );
-                                                    })}
-                                                </tr>
-
-                                                <tr style={{ background: '#f8fafc' }}>
-                                                    <th style={{ position: 'sticky', left: 0, zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ position: 'sticky', left: '40px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ position: 'sticky', left: '100px', zIndex: 11, background: '#f8fafc', borderRight: '1px solid #cbd5e1', borderBottom: '2px solid #94a3b8', textAlign: 'left', paddingLeft: '10px', color: '#64748b', fontSize: '11px', minWidth: '220px' }}>Thống kê (Số lượng/%)</th>
-                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ borderBottom: '2px solid #94a3b8' }}></th>
-                                                    <th style={{ borderBottom: '2px solid #94a3b8', borderRight: '2px solid #94a3b8' }}></th>
-                                                    {stats.map(s => (
-                                                        <th key={s.index} style={{ padding: '4px', background: getCellColor(s.wrongCount, s.wrongPercent), borderBottom: '2px solid #94a3b8', minWidth: '24px', fontSize: '10px', color: '#475569' }}>
-                                                            <div>{s.wrongCount}</div>
-                                                            <div style={{fontSize: '9px', opacity: 0.8}}>{s.wrongPercent}%</div>
-                                                        </th>
-                                                    ))}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {sortedResults.map((st, idx) => (
-                                                    <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
-                                                        <td style={{ position: 'sticky', left: 0, background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9' }}>{idx + 1}</td>
-                                                        <td style={{ position: 'sticky', left: '40px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', fontFamily: 'monospace' }}>{st.sbd}</td>
-                                                        <td style={{ 
-                                                            position: 'sticky', left: '100px', background: idx % 2 === 0 ? 'white' : '#fcfcfc', 
-                                                            borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', 
-                                                            textAlign: 'left', fontWeight: 600, paddingLeft: '10px', verticalAlign: 'middle', minWidth: '220px'
-                                                        }}>
-                                                            <div style={{ 
-                                                                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', 
-                                                                overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '1.4', maxHeight: '2.8em' 
-                                                            }}>
-                                                                {st.name}
-                                                            </div>
-                                                        </td>
-                                                        <td style={{ borderBottom: '1px solid #f1f5f9' }}>{st.code}</td>
-                                                        <td style={{ borderBottom: '1px solid #f1f5f9', fontWeight: 'bold', color: getScoreColor(st.scores.total) }}>{st.scores.total}</td>
-                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p1}</td>
-                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px' }}>{st.scores.p2}</td>
-                                                        <td style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b', fontSize: '11px', borderRight: '2px solid #e2e8f0' }}>{st.scores.p3}</td>
-                                                        {stats.map(s => {
-                                                            const isCorrect = st.details[s.index] === 'T';
-                                                            const isPart2 = p2Range && s.index >= p2Range.start && s.index <= p2Range.end;
-                                                            let bgColor = 'transparent';
-                                                            if (isCorrect) {
-                                                                bgColor = isPart2 ? DEFAULT_COLORS.yellow : 'transparent';
-                                                            } else {
-                                                                bgColor = '#fecaca'; 
-                                                            }
-                                                            return (
-                                                                <td key={s.index} style={{ 
-                                                                    borderBottom: '1px solid #f1f5f9', 
-                                                                    background: bgColor,
-                                                                    color: isCorrect ? '#cbd5e1' : '#b91c1c',
-                                                                    fontSize: '11px', fontWeight: isCorrect ? 400 : 700,
-                                                                    padding: '2px',
-                                                                    borderLeft: '1px solid #f1f5f9'
-                                                                }}>
-                                                                    {isCorrect ? '•' : st.rawAnswers[s.index]}
-                                                                </td>
-                                                            );
-                                                        })}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {activeTab === 'create' && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '30px', animation: 'fadeIn 0.3s ease-out', maxWidth: '1400px', margin: '0 auto', height: '100%' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-                            <div style={{ background: 'white', padding: '20px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                                <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                                    <BookOpen size={18} /> Cấu hình tạo đề
-                                </h3>
-                                
-                                <div style={{ 
-                                    padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0', 
-                                    textAlign: 'center', marginBottom: '15px', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0
-                                }}
-                                onClick={() => document.getElementById('exam-upload')?.click()}
-                                onMouseOver={(e) => e.currentTarget.style.borderColor = '#93c5fd'}
-                                onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
-                                >
-                                    <input type="file" accept=".pdf,.docx,.doc" onChange={handleExamFileUpload} style={{ display: 'none' }} id="exam-upload" />
-                                    <div style={{ width: '36px', height: '36px', background: 'white', borderRadius: '50%', margin: '0 auto 8px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                        <Upload size={18} color="#64748b" />
-                                    </div>
-                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>
-                                        {examFile ? examFile.name : "Chọn file đề gốc"}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Hỗ trợ PDF, DOCX</div>
-                                </div>
-
-                                {stats && (
-                                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, marginBottom: '15px' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexShrink: 0 }}>
-                                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                                                Các câu sai nhiều (&gt;{thresholds.highPercent}%):
-                                            </div>
-                                            <select 
-                                                value={statsPartFilter} 
-                                                onChange={(e) => setStatsPartFilter(e.target.value as any)}
-                                                style={{ 
-                                                    padding: '4px 8px', borderRadius: '6px', 
-                                                    border: '1px solid #cbd5e1', background: 'white',
-                                                    fontSize: '11px', color: '#1e3a8a', fontWeight: 600,
-                                                    cursor: 'pointer', outline: 'none' 
-                                                }}
-                                            >
-                                                <option value="all">Tất cả</option>
-                                                <option value="p1">Phần 1</option>
-                                                <option value="p2">Phần 2</option>
-                                                <option value="p3">Phần 3</option>
-                                            </select>
-                                        </div>
-                                        
-                                        <div style={{ overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
-                                            {filteredWrongStats.length > 0 ? (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                    {filteredWrongStats.map(s => (
-                                                        <div key={s.index} style={{ 
-                                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
-                                                            padding: '8px 10px', background: '#fff1f2', border: '1px solid #fecaca', borderRadius: '8px' 
-                                                        }}>
-                                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>
-                                                                    Câu {getPart2Label(s.index, activeSubject as any)}
-                                                                </span>
-                                                                <span style={{ fontSize: '11px', color: '#881337' }}>
-                                                                    Sai: {s.wrongPercent}% ({s.wrongCount} HS)
-                                                                </span>
-                                                            </div>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                <span style={{ fontSize: '11px', color: '#475569' }}>Số câu:</span>
-                                                                <input 
-                                                                    type="number" 
-                                                                    min="1" 
-                                                                    max="50"
-                                                                    value={questionCounts[s.index] || 5} 
-                                                                    onChange={(e) => updateQuestionCount(s.index, parseInt(e.target.value) || 0)}
-                                                                    style={{ 
-                                                                        width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1', 
-                                                                        textAlign: 'center', fontSize: '13px', fontWeight: 600
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic', padding: '10px', textAlign: 'center' }}>
-                                                    Không có câu nào thỏa mãn điều kiện lọc.
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <button 
-                                    onClick={generatePracticeExam}
-                                    disabled={!examFile || !stats || isGenerating}
-                                    style={{ 
-                                        width: '100%', padding: '12px', background: (!examFile || !stats) ? '#cbd5e1' : '#1e3a8a', 
-                                        color: 'white', border: 'none', borderRadius: '10px', cursor: (!examFile || !stats) ? 'not-allowed' : 'pointer',
-                                        fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
-                                        boxShadow: (!examFile || !stats) ? 'none' : '0 4px 6px -1px rgba(30, 58, 138, 0.3)',
-                                        transition: 'transform 0.1s', flexShrink: 0
-                                    }}
-                                    onMouseDown={(e) => !isGenerating && (e.currentTarget.style.transform = 'scale(0.98)')}
-                                    onMouseUp={(e) => !isGenerating && (e.currentTarget.style.transform = 'scale(1)')}
-                                >
-                                    {isGenerating ? <Loader2 className="spin" size={20} /> : <BrainCircuit size={20} />} 
-                                    {isGenerating ? 'Đang phân tích...' : 'Tạo đề ôn tập'}
-                                </button>
-                            </div>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                            <div style={{ flex: 1, background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                                <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>Nội dung đề tạo bởi AI</div>
-                                    {generatedExam && (
-                                        <button 
-                                            onClick={() => exportExamToWord(generatedExam, 'De_On_Tap')}
-                                            style={{ padding: '6px 12px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                                        >
-                                            <FileDown size={14} /> Tải file Word
-                                        </button>
-                                    )}
-                                </div>
-                                <div style={{ flex: 1, padding: '30px', overflowY: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'Be Vietnam Pro', fontSize: '15px', lineHeight: '1.7', color: '#1e293b' }}>
-                                    {generatedExam ? generatedExam : (
-                                        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
-                                            <BrainCircuit size={48} style={{ opacity: 0.2, marginBottom: '20px' }} />
-                                            <p>Vui lòng tải đề gốc và chạy phân tích để tạo nội dung.</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        </div>
-                    )}
-                    </>
-                )}
-
-             </div>
-      </div>
-      
-      <style>{`
-        .spin { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        
-        table th, table td { vertical-align: middle; }
-      `}</style>
-    </div>
-  );
-};
+const App = RankingView;
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<App />);
