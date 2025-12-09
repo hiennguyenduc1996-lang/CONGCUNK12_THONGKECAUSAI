@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square, Cloud, Share2, Copy, ExternalLink, HelpCircle, Save, Link, ArrowRight, Laptop } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square, Cloud, Share2, Copy, ExternalLink, HelpCircle, Save, Link, ArrowRight, Laptop, AlertTriangle } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -614,12 +614,29 @@ const RankingView = () => {
     };
 
     // --- CLOUD SYNC HANDLERS ---
+    
+    // Safety check URL to prevent crashes from passing HTML (edit page) instead of API (exec)
+    const validateScriptUrl = (url: string) => {
+        if (!url) return false;
+        if (!url.includes('script.google.com')) return false;
+        if (url.includes('/edit')) return false; // Common mistake
+        if (!url.endsWith('/exec')) return false; // Should end in exec
+        return true;
+    };
+
     const handleSyncToCloud = async () => {
         if (!scriptUrl) {
             setSyncMessage("Vui lòng nhập URL Script trước.");
             setSyncStatus("error");
             return;
         }
+        
+        if (!validateScriptUrl(scriptUrl)) {
+             setSyncMessage("URL không hợp lệ. URL phải kết thúc bằng '/exec' (Không phải '/edit')");
+             setSyncStatus("error");
+             return;
+        }
+
         setSyncStatus("loading");
         setSyncMessage("Đang gửi dữ liệu lên Google Sheet...");
         
@@ -629,11 +646,15 @@ const RankingView = () => {
                 examData: examData
             };
             
-            // Note: Google Apps Script Web App requests can be tricky with CORS.
-            // Using text/plain prevents preflight OPTIONS request in some cases.
-            // The script doPost must parse this.
+            // CRITICAL FIX: Google Apps Script Web App POST requests trigger CORS preflight checks 
+            // if Content-Type is 'application/json'. 
+            // We MUST use 'text/plain' or 'application/x-www-form-urlencoded' to skip preflight.
+            // The Headers configuration below ensures the browser treats this as a "Simple Request".
             await fetch(scriptUrl, {
                 method: "POST",
+                headers: {
+                    "Content-Type": "text/plain;charset=utf-8",
+                },
                 body: JSON.stringify(payload),
             });
             
@@ -652,12 +673,32 @@ const RankingView = () => {
             setSyncStatus("error");
             return;
         }
+
+        if (!validateScriptUrl(scriptUrl)) {
+             setSyncMessage("URL không hợp lệ. URL phải kết thúc bằng '/exec' (Không phải '/edit')");
+             setSyncStatus("error");
+             return;
+        }
+
         setSyncStatus("loading");
         setSyncMessage("Đang tải dữ liệu từ Google Sheet...");
 
         try {
             const response = await fetch(scriptUrl);
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error("Network response was not ok");
+            }
+            
+            // Safely parse JSON. If the user pasted a wrong link (like to the sheet itself), 
+            // the response will be HTML and response.json() will crash the app without a try-catch.
+            const text = await response.text();
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                console.error("Failed to parse JSON", text.substring(0, 100));
+                throw new Error("Dữ liệu trả về không phải JSON. Có thể URL sai.");
+            }
             
             if (data.students) setStudents(data.students);
             if (data.examData) setExamData(data.examData);
@@ -667,7 +708,7 @@ const RankingView = () => {
         } catch (error) {
             console.error(error);
             setSyncStatus("error");
-            setSyncMessage("Lỗi kết nối: Không thể tải dữ liệu.");
+            setSyncMessage("Lỗi kết nối: Không thể tải dữ liệu. Kiểm tra xem URL có đúng là Web App không.");
         }
     };
 
@@ -1514,6 +1555,10 @@ const RankingView = () => {
                                         <div style={{ padding: '6px 12px', background: 'white', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: 600 }}>Máy B (Người khác)</div>
                                     </div>
                                     <p style={{ margin: '4px 0 0 0' }}>Chỉ cần gửi <b>URL trên</b> cho người khác. Họ dán vào ô bên trên ở máy họ là có thể "Tải dữ liệu" về.</p>
+                                    
+                                    <div style={{ marginTop: '10px', padding: '8px', background: '#fee2e2', borderRadius: '6px', color: '#991b1b', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <AlertTriangle size={14} /> Lưu ý: URL phải kết thúc bằng "/exec", không dùng link "/edit".
+                                    </div>
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
