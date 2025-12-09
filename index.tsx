@@ -361,6 +361,7 @@ const RankingView = () => {
     const [activeExamTime, setActiveExamTime] = useState<number>(1);
     const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
+    const [classFilter, setClassFilter] = useState<string>('');
 
     // -- Handler: Upload Student List --
     const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -479,6 +480,15 @@ const RankingView = () => {
         return stats;
     }, [students]);
 
+    const uniqueClasses = useMemo(() => {
+        if (!students) return [];
+        const classes = new Set<string>();
+        students.forEach(s => {
+            if (s.class) classes.add(s.class);
+        });
+        return Array.from(classes).sort();
+    }, [students]);
+
     // --- LOGIC XÁC ĐỊNH KHỐI ---
     const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
         const c = (className || '').toUpperCase();
@@ -489,7 +499,8 @@ const RankingView = () => {
     };
 
     const getComputedData = useMemo(() => {
-        if (!students.length) return [];
+        const filteredStudents = classFilter ? students.filter(s => s.class === classFilter) : students;
+        if (!filteredStudents.length) return [];
 
         // Helper: Calculate average ignoring 0s, nulls, undefined
         const calcAvg = (values: number[]) => {
@@ -501,7 +512,7 @@ const RankingView = () => {
 
         const results: any[] = [];
 
-        students.forEach(s => {
+        filteredStudents.forEach(s => {
             const block = getBlockType(s.class);
             let shouldInclude = false;
 
@@ -586,18 +597,15 @@ const RankingView = () => {
                          colVal = record[summaryTab as keyof SubjectScores];
                     } else {
                         // Block display for daily columns
-                        const v = (val: number|undefined) => val ?? 0;
-                        const has = (val: number|undefined) => val !== undefined;
-                        
                         if (summaryTab === 'A' || (summaryTab === 'total' && block === 'A')) {
-                             if(has(record.math) || has(record.phys) || has(record.chem)) 
-                                colVal = v(record.math) + v(record.phys) + v(record.chem);
+                             if(record.math !== undefined && record.phys !== undefined && record.chem !== undefined) 
+                                colVal = record.math + record.phys + record.chem;
                         } else if (summaryTab === 'B' || (summaryTab === 'total' && block === 'B')) {
-                             if(has(record.math) || has(record.chem) || has(record.bio))
-                                colVal = v(record.math) + v(record.chem) + v(record.bio);
+                             if(record.math !== undefined && record.chem !== undefined && record.bio !== undefined)
+                                colVal = record.math + record.chem + record.bio;
                         } else if (summaryTab === 'A1' || (summaryTab === 'total' && block === 'A1')) {
-                             if(has(record.math) || has(record.phys) || has(record.eng))
-                                colVal = v(record.math) + v(record.phys) + v(record.eng);
+                             if(record.math !== undefined && record.phys !== undefined && record.eng !== undefined)
+                                colVal = record.math + record.phys + record.eng;
                         }
                     }
                  }
@@ -610,7 +618,7 @@ const RankingView = () => {
         });
 
         return results;
-    }, [students, examData, summaryTab]);
+    }, [students, examData, summaryTab, classFilter]);
 
     const sortedData = useMemo(() => {
         if (!sortConfig) return getComputedData;
@@ -854,7 +862,7 @@ const RankingView = () => {
 
                 {subTab === 'summary' && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                        <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap' }}>
+                        <div style={{ padding: '12px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', background: '#f8fafc', flexWrap: 'wrap', alignItems: 'center' }}>
                              {[
                                  {id: 'math', label: 'Toán'},
                                  {id: 'phys', label: 'Lí'},
@@ -880,6 +888,45 @@ const RankingView = () => {
                                  </button>
                              ))}
                              
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '16px', paddingLeft: '16px', borderLeft: '1px solid #e2e8f0' }}>
+                                <Filter size={14} color="#64748b" />
+                                <select
+                                    value={classFilter}
+                                    onChange={(e) => setClassFilter(e.target.value)}
+                                    style={{
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        background: 'white',
+                                        fontSize: '13px',
+                                        color: '#475569',
+                                        cursor: 'pointer',
+                                        outline: 'none',
+                                        minWidth: '150px'
+                                    }}
+                                >
+                                    <option value="">Tất cả các lớp</option>
+                                    {uniqueClasses.map(cls => <option key={cls} value={cls}>{cls}</option>)}
+                                </select>
+                                {classFilter && (
+                                    <button
+                                        onClick={() => setClassFilter('')}
+                                        aria-label="Xóa bộ lọc lớp"
+                                        style={{
+                                            background: 'transparent',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: '#94a3b8',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            padding: '4px'
+                                        }}
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                )}
+                            </div>
+
                              <div style={{ marginLeft: 'auto' }}>
                                  <button
                                    onClick={() => exportToExcel('summary-table', `Tong_Ket_${summaryTab}`)}
