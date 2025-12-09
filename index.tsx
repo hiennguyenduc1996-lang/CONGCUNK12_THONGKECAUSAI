@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square, Cloud, Share2, Copy, ExternalLink, HelpCircle, Save } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square, Cloud, Share2, Copy, ExternalLink, HelpCircle, Save, Link, ArrowRight, Laptop } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -1479,13 +1479,41 @@ const RankingView = () => {
                                     <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, fontSize: '14px', color: '#475569' }}>
                                         Google Apps Script Web App URL
                                     </label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="https://script.google.com/macros/s/..."
-                                        value={scriptUrl}
-                                        onChange={(e) => setScriptUrl(e.target.value)}
-                                        style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }}
-                                    />
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input 
+                                            type="text" 
+                                            placeholder="https://script.google.com/macros/s/..."
+                                            value={scriptUrl}
+                                            onChange={(e) => setScriptUrl(e.target.value)}
+                                            style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+                                        />
+                                        <button 
+                                            onClick={() => {
+                                                if(!scriptUrl) return;
+                                                navigator.clipboard.writeText(scriptUrl);
+                                                alert("Đã copy URL vào bộ nhớ đệm!");
+                                            }}
+                                            title="Copy link để gửi cho người khác"
+                                            style={{ padding: '0 16px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', cursor: 'pointer', color: '#475569' }}
+                                        >
+                                            <Copy size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {/* New Section: Sharing Guide */}
+                                <div style={{ padding: '12px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #dbeafe', marginBottom: '16px', fontSize: '13px', color: '#1e40af' }}>
+                                    <div style={{ fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <Laptop size={14} /> Làm sao để đồng bộ với máy khác?
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', padding: '10px 0' }}>
+                                        <div style={{ padding: '6px 12px', background: 'white', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: 600 }}>Máy A (Bạn)</div>
+                                        <ArrowRight size={14} color="#3b82f6" />
+                                        <div style={{ padding: '6px 12px', background: '#dcfce7', borderRadius: '6px', border: '1px solid #86efac', fontWeight: 600, color: '#166534' }}>Google Sheet (Qua URL trên)</div>
+                                        <ArrowRight size={14} color="#3b82f6" />
+                                        <div style={{ padding: '6px 12px', background: 'white', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: 600 }}>Máy B (Người khác)</div>
+                                    </div>
+                                    <p style={{ margin: '4px 0 0 0' }}>Chỉ cần gửi <b>URL trên</b> cho người khác. Họ dán vào ô bên trên ở máy họ là có thể "Tải dữ liệu" về.</p>
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
