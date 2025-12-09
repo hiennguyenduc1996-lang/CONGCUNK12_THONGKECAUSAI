@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
-import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square } from 'lucide-react';
+import { Upload, FileText, Download, Loader2, Settings, Key, Eye, EyeOff, Calculator, FlaskConical, Languages, BrainCircuit, Table as TableIcon, X, User, School, BookOpen, ChevronRight, LayoutDashboard, FileSpreadsheet, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, FileDown, Filter, Palette, Monitor, Hourglass, TrendingUp, Users, Database, Sigma, Award, Trash2, Atom, Globe, ScrollText, CheckSquare, Square, Cloud, Share2, Copy, ExternalLink, HelpCircle, Save } from 'lucide-react';
 
 // Declare libraries
 declare const mammoth: any;
@@ -280,17 +280,142 @@ const processZipGradeFile = (file: File, config: GradingConfig): Promise<Grading
     });
 };
 
+const SCRIPT_TEMPLATE = `
+// Hướng dẫn:
+// 1. Mở Google Sheet -> Tiện ích mở rộng -> Apps Script
+// 2. Dán đoạn mã này vào file Code.gs
+// 3. Nhấn "Triển khai" (Deploy) -> "Tùy chọn triển khai mới" (New deployment)
+// 4. Chọn loại: "Ứng dụng web" (Web app)
+// 5. Cấu hình: 
+//    - Mô tả: "API Diem"
+//    - Thực thi dưới dạng: "Tôi" (Me)
+//    - Ai có quyền truy cập: "Bất kỳ ai" (Anyone)
+// 6. Nhấn Triển khai -> Copy URL và dán vào ứng dụng.
+
+function doGet(e) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // 1. Đọc danh sách học sinh
+  const studentSheet = ss.getSheetByName("HocSinh");
+  let students = [];
+  if (studentSheet) {
+    const rows = studentSheet.getDataRange().getValues();
+    // Bỏ qua header
+    for (let i = 1; i < rows.length; i++) {
+       if(rows[i][0]) {
+         students.push({
+           id: String(rows[i][0]),
+           fullName: rows[i][1],
+           firstName: rows[i][2],
+           lastName: rows[i][3],
+           class: rows[i][4]
+         });
+       }
+    }
+  }
+
+  // 2. Đọc dữ liệu điểm
+  const scoreSheet = ss.getSheetByName("DiemChiTiet");
+  let examData = {};
+  if (scoreSheet) {
+     const rows = scoreSheet.getDataRange().getValues();
+     for (let i = 1; i < rows.length; i++) {
+        const examId = rows[i][0]; // Lần thi
+        const studentId = String(rows[i][1]);
+        
+        if (!examData[examId]) examData[examId] = {};
+        if (!examData[examId][studentId]) examData[examId][studentId] = {};
+        
+        // Cột: [Lần thi, SBD, Toán, Lý, Hóa, Sinh, Anh, Sử, Tin]
+        // Index: 0       1    2     3   4    5     6    7    8
+        if (rows[i][2] !== "") examData[examId][studentId].math = Number(rows[i][2]);
+        if (rows[i][3] !== "") examData[examId][studentId].phys = Number(rows[i][3]);
+        if (rows[i][4] !== "") examData[examId][studentId].chem = Number(rows[i][4]);
+        if (rows[i][5] !== "") examData[examId][studentId].bio = Number(rows[i][5]);
+        if (rows[i][6] !== "") examData[examId][studentId].eng = Number(rows[i][6]);
+     }
+  }
+
+  const result = { students, examData };
+  return ContentService.createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const body = e.postData.contents;
+    const data = JSON.parse(body);
+
+    // 1. Lưu Danh sách học sinh
+    let studentSheet = ss.getSheetByName("HocSinh");
+    if (!studentSheet) studentSheet = ss.insertSheet("HocSinh");
+    studentSheet.clear();
+    studentSheet.appendRow(["SBD", "Họ và Tên", "Tên", "Họ", "Lớp"]); // Header
+    
+    if (data.students && data.students.length > 0) {
+      const studentRows = data.students.map(s => [
+        s.id, s.fullName, s.firstName, s.lastName, s.class
+      ]);
+      // Write in chunks if too large, but simplified here
+      studentSheet.getRange(2, 1, studentRows.length, 5).setValues(studentRows);
+    }
+
+    // 2. Lưu Điểm
+    let scoreSheet = ss.getSheetByName("DiemChiTiet");
+    if (!scoreSheet) scoreSheet = ss.insertSheet("DiemChiTiet");
+    scoreSheet.clear();
+    scoreSheet.appendRow(["Lần Thi", "SBD", "Toán", "Lý", "Hóa", "Sinh", "Anh"]);
+
+    const scoreRows = [];
+    if (data.examData) {
+      Object.keys(data.examData).forEach(examTime => {
+          const studentsScores = data.examData[examTime];
+          Object.keys(studentsScores).forEach(sId => {
+              const sc = studentsScores[sId];
+              scoreRows.push([
+                  examTime, 
+                  sId, 
+                  sc.math ?? "",
+                  sc.phys ?? "",
+                  sc.chem ?? "",
+                  sc.bio ?? "",
+                  sc.eng ?? ""
+              ]);
+          });
+      });
+    }
+
+    if (scoreRows.length > 0) {
+       scoreSheet.getRange(2, 1, scoreRows.length, 7).setValues(scoreRows);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", rowCount: scoreRows.length }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+`;
+
 
 // --- RANKING & SUMMARY COMPONENT ---
 
 const RankingView = () => {
-    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary' | 'math-grading' | 'science-grading' | 'it-grading' | 'history-grading' | 'english-grading'>('students');
+    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary' | 'cloud' | 'math-grading' | 'science-grading' | 'it-grading' | 'history-grading' | 'english-grading'>('students');
     const [students, setStudents] = useState<StudentProfile[]>([]);
     const [examData, setExamData] = useState<ExamDataStore>({});
     const [activeExamTime, setActiveExamTime] = useState<number>(1);
     const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
     
+    // Cloud State
+    const [scriptUrl, setScriptUrl] = useState(() => localStorage.getItem('gap_script_url') || '');
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+    const [syncMessage, setSyncMessage] = useState('');
+
     // Multi-select Filter
     const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -315,6 +440,11 @@ const RankingView = () => {
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
+
+    // Save URL
+    useEffect(() => {
+        localStorage.setItem('gap_script_url', scriptUrl);
+    }, [scriptUrl]);
 
     // -- Handler: Upload Student List --
     const handleStudentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -480,6 +610,64 @@ const RankingView = () => {
                 }
                 return newData;
             });
+        }
+    };
+
+    // --- CLOUD SYNC HANDLERS ---
+    const handleSyncToCloud = async () => {
+        if (!scriptUrl) {
+            setSyncMessage("Vui lòng nhập URL Script trước.");
+            setSyncStatus("error");
+            return;
+        }
+        setSyncStatus("loading");
+        setSyncMessage("Đang gửi dữ liệu lên Google Sheet...");
+        
+        try {
+            const payload = {
+                students: students,
+                examData: examData
+            };
+            
+            // Note: Google Apps Script Web App requests can be tricky with CORS.
+            // Using text/plain prevents preflight OPTIONS request in some cases.
+            // The script doPost must parse this.
+            await fetch(scriptUrl, {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+            
+            setSyncStatus("success");
+            setSyncMessage(`Đã đồng bộ thành công ${students.length} học sinh lên Sheet!`);
+        } catch (error) {
+            console.error(error);
+            setSyncStatus("error");
+            setSyncMessage("Lỗi kết nối: Không thể gửi dữ liệu. Kiểm tra URL hoặc quyền truy cập.");
+        }
+    };
+
+    const handleSyncFromCloud = async () => {
+        if (!scriptUrl) {
+            setSyncMessage("Vui lòng nhập URL Script trước.");
+            setSyncStatus("error");
+            return;
+        }
+        setSyncStatus("loading");
+        setSyncMessage("Đang tải dữ liệu từ Google Sheet...");
+
+        try {
+            const response = await fetch(scriptUrl);
+            const data = await response.json();
+            
+            if (data.students) setStudents(data.students);
+            if (data.examData) setExamData(data.examData);
+            
+            setSyncStatus("success");
+            setSyncMessage(`Đã tải thành công: ${data.students?.length || 0} học sinh.`);
+        } catch (error) {
+            console.error(error);
+            setSyncStatus("error");
+            setSyncMessage("Lỗi kết nối: Không thể tải dữ liệu.");
         }
     };
 
@@ -920,6 +1108,18 @@ const RankingView = () => {
                 >
                     <Sigma size={18} /> Sort Ngang
                 </button>
+                <button 
+                    onClick={() => setSubTab('cloud')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'cloud' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'cloud' ? '#e11d48' : '#64748b', fontWeight: subTab === 'cloud' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <Cloud size={18} /> Đồng bộ Cloud
+                </button>
+
                 <div style={{ height: '1px', background: '#e2e8f0', margin: '10px 0' }}></div>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '10px' }}>Công cụ Chấm</div>
                 <button 
@@ -1257,6 +1457,128 @@ const RankingView = () => {
                                     )}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+                
+                {subTab === 'cloud' && (
+                    <div style={{ height: '100%', display: 'flex', gap: '20px' }}>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <div style={{ background: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}>
+                                        <Share2 size={24} />
+                                    </div>
+                                    <div>
+                                        <h3 style={{ margin: 0, color: '#1e293b' }}>Cấu hình kết nối Google Sheets</h3>
+                                        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Kết nối để đồng bộ dữ liệu điểm và học sinh lên đám mây.</p>
+                                    </div>
+                                </div>
+                                
+                                <div style={{ marginBottom: '16px' }}>
+                                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, fontSize: '14px', color: '#475569' }}>
+                                        Google Apps Script Web App URL
+                                    </label>
+                                    <input 
+                                        type="text" 
+                                        placeholder="https://script.google.com/macros/s/..."
+                                        value={scriptUrl}
+                                        onChange={(e) => setScriptUrl(e.target.value)}
+                                        style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                     <button 
+                                        onClick={handleSyncToCloud}
+                                        disabled={syncStatus === 'loading'}
+                                        style={{ 
+                                            flex: 1, padding: '12px', borderRadius: '8px', background: '#3b82f6', color: 'white', border: 'none', fontWeight: 600, cursor: 'pointer',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', minWidth: '150px'
+                                        }}
+                                    >
+                                        {syncStatus === 'loading' ? <Loader2 className="animate-spin" size={18}/> : <Upload size={18} />}
+                                        Gửi dữ liệu lên Sheet
+                                    </button>
+                                     <button 
+                                        onClick={handleSyncFromCloud}
+                                        disabled={syncStatus === 'loading'}
+                                        style={{ 
+                                            flex: 1, padding: '12px', borderRadius: '8px', background: '#059669', color: 'white', border: 'none', fontWeight: 600, cursor: 'pointer',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', minWidth: '150px'
+                                        }}
+                                    >
+                                        {syncStatus === 'loading' ? <Loader2 className="animate-spin" size={18}/> : <Download size={18} />}
+                                        Tải dữ liệu từ Sheet
+                                    </button>
+                                </div>
+
+                                {syncMessage && (
+                                    <div style={{ marginTop: '16px', padding: '12px', borderRadius: '8px', background: syncStatus === 'error' ? '#fef2f2' : '#f0fdf4', color: syncStatus === 'error' ? '#ef4444' : '#15803d', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        {syncStatus === 'error' ? <X size={16} /> : <CheckSquare size={16} />}
+                                        {syncMessage}
+                                    </div>
+                                )}
+                            </div>
+
+                             <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+                                <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px' }}>Trạng thái dữ liệu hiện tại</h4>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                        <div style={{ fontSize: '12px', color: '#64748b' }}>Học sinh</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#1e3a8a' }}>{students.length}</div>
+                                    </div>
+                                    <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                        <div style={{ fontSize: '12px', color: '#64748b' }}>Lần thi có điểm</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#1e3a8a' }}>{Object.keys(examData).length}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ width: '400px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                            <div style={{ padding: '16px', background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <HelpCircle size={18} /> Hướng dẫn cài đặt Script
+                            </div>
+                            <div style={{ flex: 1, padding: '16px', overflowY: 'auto', fontSize: '13px', lineHeight: '1.5', color: '#475569' }}>
+                                <p style={{ marginTop: 0 }}>Để tính năng này hoạt động, bạn cần tạo một Google Apps Script gắn với Google Sheet của bạn:</p>
+                                <ol style={{ paddingLeft: '20px' }}>
+                                    <li>Mở Google Sheet của bạn.</li>
+                                    <li>Vào menu <b>Tiện ích mở rộng</b> &gt; <b>Apps Script</b>.</li>
+                                    <li>Xóa code cũ, copy đoạn mã bên dưới và dán vào.</li>
+                                    <li>Nhấn nút <b>Triển khai (Deploy)</b> &gt; <b>Tùy chọn triển khai mới</b>.</li>
+                                    <li>Chọn loại: <b>Ứng dụng web (Web app)</b>.</li>
+                                    <li>Cấu hình:
+                                        <ul style={{marginTop: '4px'}}>
+                                            <li><b>Thực thi dưới dạng:</b> Tôi (Me)</li>
+                                            <li><b>Ai có quyền truy cập:</b> Bất kỳ ai (Anyone)</li>
+                                        </ul>
+                                    </li>
+                                    <li>Nhấn Triển khai, cấp quyền truy cập, sau đó Copy URL nhận được dán vào ô bên trái.</li>
+                                </ol>
+                                
+                                <div style={{ position: 'relative', marginTop: '16px' }}>
+                                    <pre style={{ 
+                                        background: '#1e293b', color: '#e2e8f0', padding: '12px', borderRadius: '8px', 
+                                        overflowX: 'auto', fontSize: '11px', fontFamily: 'monospace', margin: 0, height: '300px'
+                                    }}>
+                                        {SCRIPT_TEMPLATE}
+                                    </pre>
+                                    <button 
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(SCRIPT_TEMPLATE);
+                                            alert("Đã copy code vào bộ nhớ đệm!");
+                                        }}
+                                        style={{ 
+                                            position: 'absolute', top: '8px', right: '8px', padding: '6px 12px', 
+                                            background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', 
+                                            borderRadius: '4px', cursor: 'pointer', fontSize: '11px', display: 'flex', gap: '4px', alignItems: 'center'
+                                        }}
+                                    >
+                                        <Copy size={12} /> Copy Code
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
