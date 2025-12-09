@@ -1071,7 +1071,7 @@ const RankingView = () => {
                     </div>
                 </div>
 
-                <div style={{ flex: 1, overflow: 'auto' }}>
+                <div style={{ flex: 1, overflow: 'auto', width: '100%' }}>
                     <table id={`${id}-table`} style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1500px' }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
                             <tr>
@@ -1264,7 +1264,7 @@ const RankingView = () => {
                 </button>
             </div>
 
-            <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                 
                 {subTab === 'students' && (
                     <div style={{ display: 'flex', gap: '24px', height: '100%' }}>
@@ -1278,7 +1278,7 @@ const RankingView = () => {
                                     <input type="file" accept=".xlsx,.xls" hidden onChange={handleStudentUpload} />
                                 </label>
                             </div>
-                            <div style={{ flex: 1, overflow: 'auto' }}>
+                            <div style={{ flex: 1, overflow: 'auto', width: '100%' }}>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                     <thead style={{ position: 'sticky', top: 0, background: '#f8fafc', zIndex: 5 }}>
                                         <tr>
@@ -1378,7 +1378,7 @@ const RankingView = () => {
                              </div>
                          </div>
 
-                         <div style={{ flex: 1, overflow: 'auto', background: '#f8fafc', padding: '24px' }}>
+                         <div style={{ flex: 1, overflow: 'auto', background: '#f8fafc', padding: '24px', width: '100%' }}>
                             {activeExamScoreList.length > 0 ? (
                                 <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                                     <div style={{ padding: '15px', borderBottom: '1px solid #e2e8f0', fontWeight: 600, color: '#334155', background: '#f1f5f9' }}>
@@ -1470,7 +1470,7 @@ const RankingView = () => {
                              </div>
                         </div>
 
-                        <div style={{ flex: 1, overflow: 'auto' }}>
+                        <div style={{ flex: 1, overflow: 'auto', width: '100%' }}>
                             <table id="summary-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1200px' }}>
                                 <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
                                     <tr>
