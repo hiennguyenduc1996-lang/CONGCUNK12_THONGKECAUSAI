@@ -9,45 +9,6 @@ declare const XLSX: any;
 
 // --- Types ---
 
-interface StudentResult {
-  sbd: string;
-  name: string;
-  firstName: string;
-  lastName: string;
-  code: string;
-  rawAnswers: Record<string, string>;
-  scores: {
-    total: number;
-    p1: number;
-    p2: number;
-    p3: number;
-  };
-  details: Record<string, 'T' | 'F'>;
-}
-
-interface QuestionStat {
-  index: number;
-  wrongCount: number;
-  wrongPercent: number;
-  correctKey: string;
-}
-
-interface GradingRow {
-    stt: number;
-    sbd: string;
-    fullName: string;
-    firstName: string; // Separate for sorting
-    lastName: string;  // Separate for sorting
-    class: string;
-    examCode: string;
-    totalScore: number;
-    p1Score: number;
-    p2Score: number;
-    p3Score: number;
-    // Map of Question Index (1-40/50) -> Student Answer (if wrong), null/empty if correct
-    answers: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }>;
-}
-
 interface StudentProfile {
     id: string;
     firstName: string;
@@ -75,10 +36,6 @@ type ExamDataStore = Record<number, Record<string, SubjectScores>>;
 const formatClassName = (raw: string): string => {
     let s = String(raw || '').trim();
     // Regex: Starts with 12, followed by one or more zeros
-    // 120 (1 zero) -> 12E1
-    // 1200 (2 zeros) -> 12E2
-    // ...
-    // 120000000000 (10 zeros) -> 12E10
     const match = s.match(/^12(0+)$/);
     if (match) {
         return `12E${match[1].length}`;
@@ -92,196 +49,11 @@ const formatFullName = (lName: string, fName: string): string => {
     return full;
 };
 
-const calculateGroupScore = (correctCount: number): number => {
-  switch (correctCount) {
-    case 1: return 0.1;
-    case 2: return 0.25;
-    case 3: return 0.5;
-    case 4: return 1.0;
-    default: return 0;
-  }
-};
-
 const exportToExcel = (elementId: string, fileName: string) => {
     const table = document.getElementById(elementId);
     if (!table || typeof XLSX === 'undefined') return;
     const wb = XLSX.utils.table_to_book(table, { sheet: "ThongKe" });
     XLSX.writeFile(wb, `${fileName || 'Thong_ke'}.xlsx`);
-};
-
-// --- Generic ZipGrade Processor ---
-interface GradingConfig {
-    p1?: { start: number; end: number; val: number };
-    p2?: { ranges: Array<[number, number]> }; // Start-End inclusive for each group
-    p3?: { start: number; end: number; val: number };
-    ignore?: Array<[number, number]>; // Ranges to ignore
-    totalQuestions: number;
-}
-
-const processZipGradeFile = (file: File, config: GradingConfig): Promise<GradingRow[]> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        // FORCE UTF-8 READ for CSV compatibility to fix encoding issues like "Anh LÆ°u Quá»‘c"
-        reader.readAsText(file, 'UTF-8');
-        
-        reader.onload = (evt) => {
-            try {
-                const text = evt.target?.result;
-                // Parse the string data
-                const wb = XLSX.read(text, { type: 'string' });
-                const ws = wb.Sheets[wb.SheetNames[0]];
-                const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                
-                if (data.length < 2) {
-                    resolve([]);
-                    return;
-                }
-
-                const headers = data[0].map((h: any) => String(h || '').trim());
-                
-                // Map Headers to Indices
-                const mapIdx = (keys: string[]) => headers.findIndex(h => keys.some(k => h.toUpperCase() === k.toUpperCase()));
-                
-                const idxSBD = mapIdx(['Student ID', 'External ID', 'SBD', 'StudentID']);
-                const idxFirstName = mapIdx(['First Name', 'FirstName']);
-                const idxLastName = mapIdx(['Last Name', 'LastName']);
-                const idxClass = mapIdx(['Class', 'Lớp']);
-                const idxCode = mapIdx(['Key Version', 'Exam Code', 'Mã đề']);
-
-                // Find Answer Columns (Stu1, PriKey1...)
-                const getColIdx = (prefix: string, num: number) => headers.indexOf(`${prefix}${num}`);
-
-                const processed: GradingRow[] = [];
-                
-                // Iterate rows (skip header)
-                for (let r = 1; r < data.length; r++) {
-                    const row = data[r];
-                    if (!row || row.length === 0) continue;
-
-                    // 1. Extract Student Info
-                    const sbd = idxSBD > -1 ? String(row[idxSBD] || '') : String(row[0] || ''); 
-                    
-                    // Fallback for Class: User requested Column B (Index 1) if not found
-                    let className = '';
-                    if (idxClass > -1) className = String(row[idxClass] || '');
-                    else if (row[1]) className = String(row[1] || '');
-                    
-                    // Format Class Name (1200 -> 12E2, etc.)
-                    className = formatClassName(className);
-
-                    // --- NAME FIX: SWAP COLUMNS ---
-                    // User data often has Last Name in "First Name" col and First Name in "Last Name" col for sorting.
-                    // We extract them normally first.
-                    const rawFirstNameCol = idxFirstName > -1 ? String(row[idxFirstName] || '').trim() : '';
-                    const rawLastNameCol = idxLastName > -1 ? String(row[idxLastName] || '').trim() : '';
-
-                    // Then swap assignment to match Vietnamese semantics:
-                    // fName (Tên) <= rawLastNameCol
-                    // lName (Họ) <= rawFirstNameCol
-                    const fName = rawLastNameCol; 
-                    const lName = rawFirstNameCol;
-                    
-                    // Name Fix: Last Name + First Name + formatting
-                    const fullName = formatFullName(lName, fName);
-
-                    const code = idxCode > -1 ? String(row[idxCode] || '') : '';
-
-                    if (!sbd && !fullName) continue;
-
-                    // 2. Scoring
-                    let p1 = 0; let p2 = 0; let p3 = 0;
-                    const ansMap: Record<number, { val: string; isCorrect: boolean; isIgnored: boolean }> = {};
-
-                    const getCellVal = (prefix: string, qNum: number) => {
-                        const cIdx = getColIdx(prefix, qNum);
-                        if (cIdx === -1) return '';
-                        return String(row[cIdx] || '').trim().toUpperCase();
-                    };
-
-                    const isIgnored = (q: number) => {
-                        if (!config.ignore) return false;
-                        return config.ignore.some(([s, e]) => q >= s && q <= e);
-                    };
-
-                    // Logic P1
-                    if (config.p1) {
-                        for (let i = config.p1.start; i <= config.p1.end; i++) {
-                            const stu = getCellVal('Stu', i);
-                            const key = getCellVal('PriKey', i);
-                            const correct = (stu === key && key !== '');
-                            const ignored = isIgnored(i);
-                            
-                            if (!ignored && correct) p1 += config.p1.val;
-                            ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
-                        }
-                    }
-
-                    // Logic P2 (Groups)
-                    if (config.p2 && config.p2.ranges) {
-                        config.p2.ranges.forEach(([start, end]) => {
-                            let correctCount = 0;
-                            const groupSize = end - start + 1;
-                            for (let k = 0; k < groupSize; k++) {
-                                const qIdx = start + k;
-                                const stu = getCellVal('Stu', qIdx);
-                                const key = getCellVal('PriKey', qIdx);
-                                const correct = (stu === key && key !== '');
-                                if (correct) correctCount++;
-                                ansMap[qIdx] = { val: stu, isCorrect: correct, isIgnored: false };
-                            }
-                            p2 += calculateGroupScore(correctCount);
-                        });
-                    }
-
-                    // Logic P3
-                    if (config.p3) {
-                        for (let i = config.p3.start; i <= config.p3.end; i++) {
-                            const stu = getCellVal('Stu', i);
-                            const key = getCellVal('PriKey', i);
-                            const correct = (stu === key && key !== '');
-                            const ignored = isIgnored(i);
-                            
-                            if (!ignored && correct) p3 += config.p3.val;
-                            ansMap[i] = { val: stu, isCorrect: correct, isIgnored: ignored };
-                        }
-                    }
-
-                    // Handle completely ignored ranges
-                    for(let i=1; i <= config.totalQuestions; i++) {
-                        if (!ansMap[i]) {
-                            const stu = getCellVal('Stu', i);
-                            ansMap[i] = { val: stu, isCorrect: false, isIgnored: true };
-                        }
-                    }
-
-                    // Rounding
-                    p1 = Math.round(p1 * 100) / 100;
-                    p2 = Math.round(p2 * 100) / 100;
-                    p3 = Math.round(p3 * 100) / 100;
-                    const total = Math.round((p1 + p2 + p3) * 100) / 100;
-
-                    processed.push({
-                        stt: processed.length + 1,
-                        sbd,
-                        fullName,
-                        firstName: fName,
-                        lastName: lName,
-                        class: className,
-                        examCode: code,
-                        totalScore: total,
-                        p1Score: p1,
-                        p2Score: p2,
-                        p3Score: p3,
-                        answers: ansMap
-                    });
-                }
-                resolve(processed);
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.onerror = reject;
-    });
 };
 
 const SCRIPT_TEMPLATE = `
@@ -405,15 +177,413 @@ function doPost(e) {
 `;
 
 
+const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
+    const c = String(className || '').toUpperCase();
+    if (c.includes('E')) return 'A1';
+    if (c.includes('B')) return 'B';
+    if (c.includes('A')) return 'A';
+    return 'Other';
+};
+
+// --- TOP-LEVEL RESPONSIVE CHART COMPONENT ---
+const ResponsiveSVGChart = ({
+    students,
+    chartClassStudents,
+    activeExams,
+    rankingMap,
+    visibleStudents,
+    hoveredStudentId,
+    setHoveredStudentId,
+    useFullScale,
+    comparisonMode,
+    selectedChartClass,
+    getStudentColor,
+    showAllLabels
+}: {
+    students: StudentProfile[];
+    chartClassStudents: StudentProfile[];
+    activeExams: number[];
+    rankingMap: Record<number, Record<string, { rank: number; total: number; score: number }>>;
+    visibleStudents: Record<string, boolean>;
+    hoveredStudentId: string | null;
+    setHoveredStudentId: (id: string | null) => void;
+    useFullScale: boolean;
+    comparisonMode: 'class' | 'block' | 'school';
+    selectedChartClass: string;
+    getStudentColor: (idx: number) => string;
+    showAllLabels: boolean;
+}) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [dimensions, setDimensions] = useState({ width: 600, height: 380 });
+    const [tooltip, setTooltip] = useState<{ x: number, y: number, studentName: string, exam: number, score: number, rank: number, total: number, color: string } | null>(null);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const resizeObserver = new ResizeObserver((entries) => {
+            if (!entries || entries.length === 0) return;
+            const { width, height } = entries[0].contentRect;
+            const finalHeight = height > 0 ? height : 380;
+            setDimensions((prev) => {
+                const newW = Math.max(width, 300);
+                const newH = Math.max(finalHeight, 350);
+                // Only update dimensions if there is a significant change (> 5px)
+                // This breaks the hover layout loop and completely stops the jumping/flickering bug
+                if (Math.abs(prev.width - newW) > 5 || Math.abs(prev.height - newH) > 5) {
+                    return { width: newW, height: newH };
+                }
+                return prev;
+            });
+        });
+        resizeObserver.observe(containerRef.current);
+        return () => resizeObserver.disconnect();
+    }, []);
+
+    const { width, height } = dimensions;
+    const paddingLeft = 70;
+    const paddingRight = 40;
+    const paddingTop = 50;
+    const paddingBottom = 45;
+
+    const chartW = width - paddingLeft - paddingRight;
+    const chartH = height - paddingTop - paddingBottom;
+
+    const comparisonGroupSize = useMemo(() => {
+        if (comparisonMode === 'class') {
+            return students.filter(s => s && s.class === selectedChartClass).length;
+        } else if (comparisonMode === 'block') {
+            const currentBlock = getBlockType(selectedChartClass);
+            return students.filter(s => s && getBlockType(s.class) === currentBlock).length;
+        } else {
+            return students.length;
+        }
+    }, [students, selectedChartClass, comparisonMode]);
+
+    const maxRankValue = useMemo(() => {
+        if (useFullScale) {
+            return Math.max(comparisonGroupSize, 2);
+        }
+        let maxR = 1;
+        chartClassStudents.forEach(s => {
+            if (!visibleStudents[s.id]) return;
+            activeExams.forEach(ex => {
+                const r = rankingMap[ex]?.[s.id]?.rank;
+                if (r !== undefined && r > maxR) {
+                    maxR = r;
+                }
+            });
+        });
+        return Math.max(maxR + 1, 10);
+    }, [useFullScale, comparisonGroupSize, chartClassStudents, visibleStudents, activeExams, rankingMap]);
+
+    const getX = (index: number) => {
+        if (activeExams.length <= 1) return paddingLeft + chartW / 2;
+        return paddingLeft + (index / (activeExams.length - 1)) * chartW;
+    };
+
+    const getY = (rank: number) => {
+        const range = maxRankValue - 1 || 1;
+        return paddingTop + ((rank - 1) / range) * chartH;
+    };
+
+    const ticks = useMemo(() => {
+        const t = [1];
+        let step = 5;
+        if (maxRankValue > 100) step = 20;
+        else if (maxRankValue > 50) step = 10;
+        
+        let next = step;
+        while (next < maxRankValue) {
+            t.push(next);
+            next += step;
+        }
+        if (t[t.length - 1] !== maxRankValue && maxRankValue - t[t.length - 1] >= 2) {
+            t.push(maxRankValue);
+        }
+        return t;
+    }, [maxRankValue]);
+
+    const numVisible = useMemo(() => {
+        return Object.values(visibleStudents).filter(Boolean).length;
+    }, [visibleStudents]);
+
+    return (
+        <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+            <svg width={width} height={height} style={{ overflow: 'visible' }}>
+                <defs>
+                    <marker
+                        id="arrow-up"
+                        viewBox="0 0 10 10"
+                        refX="5"
+                        refY="2"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto"
+                    >
+                        <path d="M 0 10 L 5 0 L 10 10 z" fill="#1e293b" />
+                    </marker>
+                    <marker
+                        id="arrow-right"
+                        viewBox="0 0 10 10"
+                        refX="8"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto"
+                    >
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#1e293b" />
+                    </marker>
+                </defs>
+
+                {/* Grid Lines & Y Axis Labels */}
+                {ticks.map((rValue) => {
+                    const y = getY(rValue);
+                    return (
+                        <g key={rValue}>
+                            <line 
+                                x1={paddingLeft} 
+                                y1={y} 
+                                x2={paddingLeft + chartW} 
+                                y2={y} 
+                                stroke="#f1f5f9" 
+                                strokeWidth={1.5}
+                                strokeDasharray="4 4" 
+                            />
+                            <text 
+                                x={paddingLeft - 12} 
+                                y={y + 4} 
+                                textAnchor="end" 
+                                style={{ fontSize: '12px', fill: '#475569', fontFamily: 'monospace', fontWeight: 600 }}
+                            >
+                                {rValue}
+                            </text>
+                        </g>
+                    );
+                })}
+
+                {/* X Axis Grid Lines & Exam Labels */}
+                {activeExams.map((ex, idx) => {
+                    const x = getX(idx);
+                    return (
+                        <g key={idx}>
+                            <line 
+                                x1={x} 
+                                y1={paddingTop} 
+                                x2={x} 
+                                y2={paddingTop + chartH} 
+                                stroke="#f1f5f9" 
+                                strokeWidth={1.5}
+                                strokeDasharray="4 4" 
+                            />
+                            <text 
+                                x={x} 
+                                y={paddingTop + chartH + 22} 
+                                textAnchor="middle" 
+                                style={{ fontSize: '12px', fill: '#475569', fontWeight: 700 }}
+                            >
+                                KT {ex}
+                            </text>
+                        </g>
+                    );
+                })}
+
+                {/* Draw Solid Axis Lines */}
+                <line 
+                    x1={paddingLeft} 
+                    y1={paddingTop + chartH} 
+                    x2={paddingLeft} 
+                    y2={paddingTop - 25} 
+                    stroke="#1e293b" 
+                    strokeWidth={2} 
+                    markerEnd="url(#arrow-up)" 
+                />
+                <line 
+                    x1={paddingLeft} 
+                    y1={paddingTop + chartH} 
+                    x2={paddingLeft + chartW + 30} 
+                    y2={paddingTop + chartH} 
+                    stroke="#1e293b" 
+                    strokeWidth={2} 
+                    markerEnd="url(#arrow-right)" 
+                />
+
+                {/* Badge at the top of Y Axis */}
+                <g transform={`translate(${paddingLeft - 32}, ${paddingTop - 45})`}>
+                    <rect width="64" height="22" rx="11" fill="#1e3a8a" />
+                    <text x="32" y="15" textAnchor="middle" style={{ fill: '#ffffff', fontSize: '11px', fontWeight: 700 }}>
+                        Xếp hạng
+                    </text>
+                </g>
+
+                {/* Student Lines and Points */}
+                {chartClassStudents.map((s, sIdx) => {
+                    const isVisible = !!visibleStudents[s.id];
+                    if (!isVisible) return null;
+
+                    const color = getStudentColor(sIdx);
+                    const isHovered = hoveredStudentId === s.id;
+                    const isAnyHovered = hoveredStudentId !== null;
+
+                    const points: { x: number; y: number; ex: number; rank: number; score: number; total: number }[] = [];
+                    activeExams.forEach((ex, idx) => {
+                        const data = rankingMap[ex]?.[s.id];
+                        if (data !== undefined) {
+                            points.push({
+                                x: getX(idx),
+                                y: getY(data.rank),
+                                ex,
+                                rank: data.rank,
+                                score: data.score,
+                                total: data.total
+                            });
+                        }
+                    });
+
+                    if (points.length === 0) return null;
+
+                    let pathD = '';
+                    points.forEach((pt, idx) => {
+                        if (idx === 0) pathD += `M ${pt.x} ${pt.y}`;
+                        else pathD += ` L ${pt.x} ${pt.y}`;
+                    });
+
+                    const opacity = isHovered ? 1 : (isAnyHovered ? 0.45 : 0.8);
+                    const strokeWidth = isHovered ? 4.5 : 2.5;
+
+                    return (
+                        <g key={s.id}>
+                            {/* The line connecting the dots */}
+                            <path 
+                                d={pathD} 
+                                fill="none" 
+                                stroke={color} 
+                                strokeWidth={strokeWidth} 
+                                strokeOpacity={opacity}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            />
+
+                            {/* Text labels directly above/below circles */}
+                            {points.map((pt, idx) => {
+                                const showText = showAllLabels || isHovered || numVisible <= 5;
+                                if (!showText) return null;
+
+                                const textY = pt.y - 12 < paddingTop ? pt.y + 16 : pt.y - 10;
+                                return (
+                                    <text 
+                                        key={`lbl-${idx}`}
+                                        x={pt.x}
+                                        y={textY}
+                                        textAnchor="middle"
+                                        opacity={opacity}
+                                        style={{ 
+                                            fontSize: isHovered ? '13px' : '11px', 
+                                            fontWeight: 'bold', 
+                                            fill: color, 
+                                            pointerEvents: 'none'
+                                        }}
+                                    >
+                                        {pt.rank}
+                                    </text>
+                                );
+                            })}
+
+                            {/* Interactive Circles */}
+                            {points.map((pt, idx) => (
+                                <circle 
+                                    key={`c-${idx}`}
+                                    cx={pt.x}
+                                    cy={pt.y}
+                                    r={isHovered ? 6 : 4.5}
+                                    fill={color}
+                                    stroke="white"
+                                    strokeWidth={2}
+                                    opacity={opacity}
+                                    style={{ cursor: 'pointer', transition: 'all 0.15s ease' }}
+                                    onMouseEnter={() => {
+                                        setHoveredStudentId(s.id);
+                                        setTooltip({
+                                            x: pt.x,
+                                            y: pt.y,
+                                            studentName: s.fullName,
+                                            exam: pt.ex,
+                                            score: pt.score,
+                                            rank: pt.rank,
+                                            total: pt.total,
+                                            color
+                                        });
+                                    }}
+                                    onMouseLeave={() => {
+                                        setHoveredStudentId(null);
+                                        setTooltip(null);
+                                    }}
+                                />
+                            ))}
+                        </g>
+                    );
+                })}
+            </svg>
+
+            {tooltip && (
+                <div 
+                    style={{
+                        position: 'absolute',
+                        left: `${tooltip.x + 12}px`,
+                        top: `${tooltip.y - 45}px`,
+                        background: 'rgba(15, 23, 42, 0.95)',
+                        color: 'white',
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+                        fontSize: '12px',
+                        zIndex: 1000,
+                        pointerEvents: 'none',
+                        borderLeft: `4px solid ${tooltip.color}`,
+                        minWidth: '160px'
+                    }}
+                >
+                    <div style={{ fontWeight: 700, marginBottom: '4px', fontSize: '13px' }}>{tooltip.studentName}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
+                        <span>Lần thi:</span>
+                        <span style={{ fontWeight: 600, color: 'white' }}>KT {tooltip.exam}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
+                        <span>Điểm số:</span>
+                        <span style={{ fontWeight: 600, color: '#f59e0b' }}>{tooltip.score}đ</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1' }}>
+                        <span>Xếp hạng:</span>
+                        <span style={{ fontWeight: 700, color: '#10b981' }}>
+                            Hạng {tooltip.rank}/{tooltip.total}
+                        </span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // --- RANKING & SUMMARY COMPONENT ---
 
 const RankingView = () => {
-    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary' | 'cloud' | 'math-grading' | 'science-grading' | 'it-grading' | 'history-grading' | 'english-grading'>('students');
+    const [subTab, setSubTab] = useState<'students' | 'scores' | 'summary' | 'sort-summary' | 'cloud' | 'chart'>('students');
     const [students, setStudents] = useState<StudentProfile[]>([]);
     const [examData, setExamData] = useState<ExamDataStore>({});
     const [activeExamTime, setActiveExamTime] = useState<number>(1);
-    const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'A'|'A1'|'B'|'total'>('math');
+    const [summaryTab, setSummaryTab] = useState<'math'|'phys'|'chem'|'eng'|'bio'|'custom'|'A'|'A1'|'B'|'total'>('math');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc'|'desc' } | null>(null);
+    
+    // Custom combination subjects
+    const [customSubjects, setCustomSubjects] = useState({ math: false, phys: true, chem: false, eng: true });
+
+    // Chart tab states
+    const [selectedChartClass, setSelectedChartClass] = useState<string>('');
+    const [comparisonMode, setComparisonMode] = useState<'class' | 'block' | 'school'>('class');
+    const [rankScoreType, setRankScoreType] = useState<'math' | 'phys' | 'chem' | 'eng' | 'bio' | 'A' | 'A1' | 'B' | 'total'>('total');
+    const [visibleStudents, setVisibleStudents] = useState<Record<string, boolean>>({});
+    const [hoveredStudentId, setHoveredStudentId] = useState<string | null>(null);
+    const [chartSearch, setChartSearch] = useState('');
+    const [useFullScale, setUseFullScale] = useState<boolean>(true);
+    const [showAllLabels, setShowAllLabels] = useState<boolean>(true);
     
     // Cloud State
     const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFwQd_LBj4GrNG5P-BlmHKBO4XLrhx6aN0dutYYbTSK2GJRL04J1OSLFc09Gcc3Qlt/exec";
@@ -425,15 +595,6 @@ const RankingView = () => {
     const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const filterRef = useRef<HTMLDivElement>(null);
-
-    // Grading States
-    const [mathResults, setMathResults] = useState<GradingRow[]>([]);
-    const [scienceResults, setScienceResults] = useState<GradingRow[]>([]);
-    const [itResults, setItResults] = useState<GradingRow[]>([]);
-    const [historyResults, setHistoryResults] = useState<GradingRow[]>([]);
-    const [englishResults, setEnglishResults] = useState<GradingRow[]>([]);
-
-    const [activeSortConfig, setActiveSortConfig] = useState<{ key: 'sbd' | 'name' | 'total', direction: 'asc' | 'desc' } | null>(null);
 
     // Click outside to close filter
     useEffect(() => {
@@ -543,64 +704,7 @@ const RankingView = () => {
         };
     };
 
-    // --- GRADING HANDLERS ---
-    const handleMathUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files?.[0]) return;
-        const data = await processZipGradeFile(e.target.files[0], {
-            totalQuestions: 40,
-            p1: { start: 1, end: 12, val: 0.25 },
-            ignore: [[13, 18]],
-            p2: { ranges: [[19, 22], [23, 26], [27, 30], [31, 34]] },
-            p3: { start: 35, end: 40, val: 0.5 }
-        });
-        setMathResults(data);
-        e.target.value = '';
-    };
 
-    const handleScienceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files?.[0]) return;
-        const data = await processZipGradeFile(e.target.files[0], {
-            totalQuestions: 40,
-            p1: { start: 1, end: 18, val: 0.25 },
-            p2: { ranges: [[19, 22], [23, 26], [27, 30], [31, 34]] },
-            p3: { start: 35, end: 40, val: 0.25 }
-        });
-        setScienceResults(data);
-        e.target.value = '';
-    };
-
-    const handleITUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files?.[0]) return;
-        const data = await processZipGradeFile(e.target.files[0], {
-            totalQuestions: 40,
-            p1: { start: 1, end: 28, val: 0.25 },
-            p2: { ranges: [[29, 32], [33, 36], [37, 40]] }
-        });
-        setItResults(data);
-        e.target.value = '';
-    };
-
-    const handleHistoryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files?.[0]) return;
-        const data = await processZipGradeFile(e.target.files[0], {
-            totalQuestions: 40,
-            p1: { start: 1, end: 24, val: 0.25 },
-            p2: { ranges: [[25, 28], [29, 32], [33, 36], [37, 40]] }
-        });
-        setHistoryResults(data);
-        e.target.value = '';
-    };
-
-    const handleEnglishUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files?.[0]) return;
-        const data = await processZipGradeFile(e.target.files[0], {
-            totalQuestions: 50,
-            p1: { start: 1, end: 40, val: 0.25 },
-            ignore: [[41, 50]]
-        });
-        setEnglishResults(data);
-        e.target.value = '';
-    };
 
     const handleDeleteScore = () => {
         if(confirm(`Bạn có chắc muốn xóa dữ liệu điểm của Lần ${activeExamTime} (đưa về 0) không?`)) {
@@ -760,31 +864,165 @@ const RankingView = () => {
         return stats;
     }, [students]);
 
-    // Collect all unique classes from all datasets for the filter dropdown
+    // Collect all unique classes from the student list for the filter dropdown
     const uniqueClasses = useMemo(() => {
         const classes = new Set<string>();
-        const safeAdd = (list: any[]) => {
-            if(Array.isArray(list)) {
-                list.forEach(s => s && s.class && classes.add(s.class));
-            }
-        };
-        safeAdd(students);
-        safeAdd(mathResults);
-        safeAdd(scienceResults);
-        safeAdd(itResults);
-        safeAdd(historyResults);
-        safeAdd(englishResults);
-        
+        if (Array.isArray(students)) {
+            students.forEach(s => s && s.class && classes.add(s.class));
+        }
         return Array.from(classes).sort();
-    }, [students, mathResults, scienceResults, itResults, historyResults, englishResults]);
+    }, [students]);
 
-    const getBlockType = (className: string): 'A' | 'A1' | 'B' | 'Other' => {
-        const c = String(className || '').toUpperCase();
-        if (c.includes('E')) return 'A1';
-        if (c.includes('B')) return 'B';
-        if (c.includes('A')) return 'A';
-        return 'Other';
+    useEffect(() => {
+        if (uniqueClasses.length > 0 && (!selectedChartClass || !uniqueClasses.includes(selectedChartClass))) {
+            setSelectedChartClass(uniqueClasses[0]);
+        }
+    }, [uniqueClasses, selectedChartClass]);
+
+    // --- CHART TAB CALCULATIONS & HELPERS ---
+
+    const getStudentExamScore = (sId: string, examIndex: number, type: string) => {
+        const record = examData[examIndex]?.[sId];
+        if (!record) return undefined;
+        const student = students.find(s => s.id === sId);
+        if (!student) return undefined;
+        const block = getBlockType(student.class);
+
+        if (type === 'math') return record.math;
+        if (type === 'phys') return record.phys;
+        if (type === 'chem') return record.chem;
+        if (type === 'bio') return record.bio;
+        if (type === 'eng') return record.eng;
+        if (type === 'A') {
+            if (record.math !== undefined && record.phys !== undefined && record.chem !== undefined) {
+                return record.math + record.phys + record.chem;
+            }
+        }
+        if (type === 'B') {
+            if (record.math !== undefined && record.chem !== undefined && record.bio !== undefined) {
+                return record.math + record.chem + record.bio;
+            }
+        }
+        if (type === 'A1') {
+            if (record.math !== undefined && record.phys !== undefined && record.eng !== undefined) {
+                return record.math + record.phys + record.eng;
+            }
+        }
+        if (type === 'total') {
+            if (block === 'A') {
+                if (record.math !== undefined && record.phys !== undefined && record.chem !== undefined) 
+                    return record.math + record.phys + record.chem;
+            } else if (block === 'B') {
+                if (record.math !== undefined && record.chem !== undefined && record.bio !== undefined)
+                    return record.math + record.chem + record.bio;
+            } else if (block === 'A1') {
+                if (record.math !== undefined && record.phys !== undefined && record.eng !== undefined)
+                    return record.math + record.phys + record.eng;
+            }
+        }
+        return undefined;
     };
+
+    const rankingMap = useMemo(() => {
+        const map: Record<number, Record<string, { rank: number; total: number; score: number }>> = {};
+        
+        for (let i = 1; i <= 40; i++) {
+            map[i] = {};
+            
+            const studentsWithScores = students.map(s => {
+                const score = getStudentExamScore(s.id, i, rankScoreType);
+                return { s, score };
+            }).filter(item => item.score !== undefined) as { s: StudentProfile; score: number }[];
+
+            if (studentsWithScores.length === 0) continue;
+
+            if (comparisonMode === 'class') {
+                const classes: Record<string, typeof studentsWithScores> = {};
+                studentsWithScores.forEach(item => {
+                    const c = item.s.class;
+                    if (!classes[c]) classes[c] = [];
+                    classes[c].push(item);
+                });
+                
+                Object.keys(classes).forEach(cName => {
+                    const group = classes[cName];
+                    group.sort((a, b) => b.score - a.score);
+                    group.forEach((item) => {
+                        const rank = group.filter(x => x.score > item.score).length + 1;
+                        map[i][item.s.id] = { rank, total: group.length, score: item.score };
+                    });
+                });
+            } else if (comparisonMode === 'block') {
+                const blocks: Record<string, typeof studentsWithScores> = {};
+                studentsWithScores.forEach(item => {
+                    const b = getBlockType(item.s.class);
+                    if (!blocks[b]) blocks[b] = [];
+                    blocks[b].push(item);
+                });
+                
+                Object.keys(blocks).forEach(bName => {
+                    const group = blocks[bName];
+                    group.sort((a, b) => b.score - a.score);
+                    group.forEach((item) => {
+                        const rank = group.filter(x => x.score > item.score).length + 1;
+                        map[i][item.s.id] = { rank, total: group.length, score: item.score };
+                    });
+                });
+            } else {
+                studentsWithScores.sort((a, b) => b.score - a.score);
+                studentsWithScores.forEach((item) => {
+                    const rank = studentsWithScores.filter(x => x.score > item.score).length + 1;
+                    map[i][item.s.id] = { rank, total: studentsWithScores.length, score: item.score };
+                });
+            }
+        }
+        return map;
+    }, [students, examData, rankScoreType, comparisonMode]);
+
+    const chartClassStudents = useMemo(() => {
+        return students.filter(s => s && s.class === selectedChartClass);
+    }, [students, selectedChartClass]);
+
+    const activeExams = useMemo(() => {
+        const exams: number[] = [];
+        for (let i = 1; i <= 40; i++) {
+            const hasScore = chartClassStudents.some(s => rankingMap[i]?.[s.id] !== undefined);
+            if (hasScore) {
+                exams.push(i);
+            }
+        }
+        return exams.sort((a, b) => a - b);
+    }, [chartClassStudents, rankingMap]);
+
+    useEffect(() => {
+        if (chartClassStudents.length > 0) {
+            const studentsWithAverages = chartClassStudents.map(s => {
+                const scs: number[] = [];
+                for (let i = 1; i <= 40; i++) {
+                    const score = getStudentExamScore(s.id, i, rankScoreType);
+                    if (score !== undefined) scs.push(score);
+                }
+                const avg = scs.length > 0 ? (scs.reduce((a, b) => a + b, 0) / scs.length) : 0;
+                return { id: s.id, avg };
+            }).sort((a, b) => b.avg - a.avg);
+
+            const initialVisible: Record<string, boolean> = {};
+            studentsWithAverages.forEach((item, idx) => {
+                initialVisible[item.id] = idx < 10;
+            });
+            setVisibleStudents(initialVisible);
+        }
+    }, [selectedChartClass, rankScoreType, students]);
+
+    const colorsList = [
+        '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
+        '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#6366f1',
+        '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', 
+        '#0d9488', '#ea580c', '#0891b2', '#4f46e5'
+    ];
+    const getStudentColor = (idx: number) => colorsList[idx % colorsList.length];
+
+
 
     const getComputedData = useMemo(() => {
         if (!Array.isArray(students)) return [];
@@ -810,6 +1048,7 @@ const RankingView = () => {
             else if (summaryTab === 'chem') shouldInclude = (block === 'A' || block === 'B');
             else if (summaryTab === 'bio') shouldInclude = (block === 'B');
             else if (summaryTab === 'eng') shouldInclude = (block === 'A1');
+            else if (summaryTab === 'custom') shouldInclude = true;
             else if (summaryTab === 'A') shouldInclude = (block === 'A');
             else if (summaryTab === 'B') shouldInclude = (block === 'B');
             else if (summaryTab === 'A1') shouldInclude = (block === 'A1');
@@ -843,6 +1082,12 @@ const RankingView = () => {
             else if (summaryTab === 'chem') finalVal = avgChem;
             else if (summaryTab === 'bio') finalVal = avgBio;
             else if (summaryTab === 'eng') finalVal = avgEng;
+            else if (summaryTab === 'custom') {
+                if (customSubjects.math) finalVal += avgMath;
+                if (customSubjects.phys) finalVal += avgPhys;
+                if (customSubjects.chem) finalVal += avgChem;
+                if (customSubjects.eng) finalVal += avgEng;
+            }
             else if (summaryTab === 'A') finalVal = avgMath + avgPhys + avgChem;
             else if (summaryTab === 'B') finalVal = avgMath + avgChem + avgBio;
             else if (summaryTab === 'A1') finalVal = avgMath + avgPhys + avgEng;
@@ -858,6 +1103,14 @@ const RankingView = () => {
                  if (record) {
                     if (['math','phys','chem','bio','eng'].includes(summaryTab)) {
                          colVal = record[summaryTab as keyof SubjectScores];
+                    } else if (summaryTab === 'custom') {
+                         let sum = 0;
+                         let hasValue = false;
+                         if (customSubjects.math && record.math !== undefined) { sum += record.math; hasValue = true; }
+                         if (customSubjects.phys && record.phys !== undefined) { sum += record.phys; hasValue = true; }
+                         if (customSubjects.chem && record.chem !== undefined) { sum += record.chem; hasValue = true; }
+                         if (customSubjects.eng && record.eng !== undefined) { sum += record.eng; hasValue = true; }
+                         if (hasValue) colVal = sum;
                     } else {
                         if (summaryTab === 'A' || (summaryTab === 'total' && block === 'A')) {
                              if(record.math !== undefined && record.phys !== undefined && record.chem !== undefined) 
@@ -912,46 +1165,7 @@ const RankingView = () => {
          return sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
     };
 
-    const handleGradingSort = (key: 'sbd' | 'name' | 'total') => {
-        let direction: 'asc' | 'desc' = 'asc';
-        if (activeSortConfig && activeSortConfig.key === key && activeSortConfig.direction === 'asc') {
-            direction = 'desc';
-        }
-        setActiveSortConfig({ key, direction });
-    };
 
-    const renderGradingSortIcon = (key: 'sbd' | 'name' | 'total') => {
-        if (activeSortConfig?.key !== key) return <ArrowUpDown size={12} style={{opacity:0.3}}/>;
-        return activeSortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>;
-    };
-
-    // Generic Sort for Grading Tables
-    const getSortedGradingResults = (results: GradingRow[]) => {
-        let data = [...results];
-        
-        // Filter by class
-        if (selectedClasses.length > 0) {
-            data = data.filter(r => selectedClasses.includes(r.class));
-        }
-
-        if (activeSortConfig) {
-            data.sort((a, b) => {
-                if (activeSortConfig.key === 'sbd') {
-                    return a.sbd.localeCompare(b.sbd, 'en', { numeric: true }) * (activeSortConfig.direction === 'asc' ? 1 : -1);
-                }
-                if (activeSortConfig.key === 'total') {
-                    return (a.totalScore - b.totalScore) * (activeSortConfig.direction === 'asc' ? 1 : -1);
-                }
-                if (activeSortConfig.key === 'name') {
-                    const res = a.firstName.localeCompare(b.firstName, 'vi');
-                    if (res !== 0) return res * (activeSortConfig.direction === 'asc' ? 1 : -1);
-                    return a.lastName.localeCompare(b.lastName, 'vi') * (activeSortConfig.direction === 'asc' ? 1 : -1);
-                }
-                return 0;
-            });
-        }
-        return data.map((item, index) => ({ ...item, stt: index + 1 }));
-    };
 
     // --- FIX: Define activeExamScoreList ---
     const activeExamScoreList = useMemo(() => {
@@ -1023,134 +1237,6 @@ const RankingView = () => {
         </div>
     );
 
-    // Helper to render grading table
-    const renderGradingTable = (results: GradingRow[], id: string, title: string, questionCount: number) => {
-        const sorted = getSortedGradingResults(results);
-        
-        // Calculate Statistics
-        const scores = sorted.map(s => s.totalScore);
-        const count = scores.length;
-        const max = count > 0 ? Math.max(...scores) : 0;
-        const min = count > 0 ? Math.min(...scores) : 0;
-        const avg = count > 0 ? (scores.reduce((a, b) => a + b, 0) / count).toFixed(2) : 0;
-
-        return (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                <div style={{ padding: '16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-                     <div>
-                         <h3 style={{ margin: '0 0 4px 0', color: '#1e293b' }}>{title}</h3>
-                         <div style={{ display: 'flex', gap: '12px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-                            <span>Sĩ số: <span style={{color: '#1e293b'}}>{count}</span></span>
-                            <span>TB: <span style={{color: '#059669'}}>{avg}</span></span>
-                            <span>Cao nhất: <span style={{color: '#059669'}}>{max}</span></span>
-                            <span>Thấp nhất: <span style={{color: '#ef4444'}}>{min}</span></span>
-                         </div>
-                     </div>
-                     
-                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        {renderMultiSelect()}
-                        
-                        <label style={{ 
-                                padding: '10px 20px', background: '#3b82f6', color: 'white', borderRadius: '8px', fontSize: '14px', fontWeight: 600, 
-                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                            }}>
-                                <Upload size={18} /> Tải file ZipGrade
-                                <input type="file" accept=".xlsx,.xls,.csv" hidden onChange={
-                                    id === 'math' ? handleMathUpload :
-                                    id === 'science' ? handleScienceUpload :
-                                    id === 'it' ? handleITUpload :
-                                    id === 'history' ? handleHistoryUpload :
-                                    handleEnglishUpload
-                                } />
-                        </label>
-
-                        <button
-                               onClick={() => exportToExcel(`${id}-table`, `Diem_${id}`)}
-                               style={{
-                                  padding: '10px 20px', borderRadius: '8px', background: '#059669', border: 'none',
-                                  cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: 'white',
-                                  display: 'flex', alignItems: 'center', gap: '8px'
-                               }}
-                             >
-                               <FileDown size={18} /> Xuất Excel
-                        </button>
-                    </div>
-                </div>
-
-                <div style={{ flex: 1, overflow: 'auto', width: '100%' }}>
-                    <table id={`${id}-table`} style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px', minWidth: '1500px' }}>
-                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f1f5f9' }}>
-                            <tr>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '40px' }}>STT</th>
-                                <th rowSpan={2} onClick={() => handleGradingSort('sbd')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', textAlign: 'left', width: '80px', cursor: 'pointer' }}>
-                                    <div style={{display:'flex', alignItems:'center', gap:'4px'}}>SBD {renderGradingSortIcon('sbd')}</div>
-                                </th>
-                                <th rowSpan={2} onClick={() => handleGradingSort('name')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', textAlign: 'left', minWidth: '180px', cursor: 'pointer' }}>
-                                    <div style={{display:'flex', alignItems:'center', gap:'4px'}}>Họ và Tên {renderGradingSortIcon('name')}</div>
-                                </th>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '60px' }}>Lớp</th>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', width: '60px' }}>Mã đề</th>
-                                <th rowSpan={2} onClick={() => handleGradingSort('total')} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#fef3c7', fontWeight: 800, color: '#b45309', cursor: 'pointer' }}>
-                                    <div style={{display:'flex', alignItems:'center', gap:'4px', justifyContent: 'center'}}>Tổng {renderGradingSortIcon('total')}</div>
-                                </th>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P1</th>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P2</th>
-                                <th rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', background: '#dbeafe' }}>P3</th>
-                                <th colSpan={questionCount} style={{ padding: '8px', borderBottom: '1px solid #cbd5e1', textAlign: 'center' }}>Chi tiết câu hỏi</th>
-                            </tr>
-                            <tr>
-                                {Array.from({length: questionCount}, (_, i) => i + 1).map(num => {
-                                    return (
-                                        <th key={num} style={{ 
-                                            padding: '4px', borderBottom: '1px solid #cbd5e1', borderRight: '1px solid #e2e8f0', 
-                                            width: '35px', fontSize: '11px', color: '#64748b'
-                                        }}>
-                                            {num}
-                                        </th>
-                                    );
-                                })}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {sorted.length > 0 ? sorted.map((row, idx) => (
-                                <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.stt}</td>
-                                    <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 600, color: '#475569' }}>{row.sbd}</td>
-                                    <td style={{ padding: '8px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', fontWeight: 500, whiteSpace: 'nowrap' }}>{row.fullName}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.class}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>{row.examCode}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#fffbeb', fontWeight: 700, color: '#b45309' }}>{row.totalScore}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p1Score}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p2Score}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#eff6ff' }}>{row.p3Score}</td>
-                                    
-                                    {Array.from({length: questionCount}, (_, i) => i + 1).map(num => {
-                                        const ans = row.answers[num];
-                                        if (ans.isIgnored) {
-                                            return <td key={num} style={{ padding: '6px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', color: '#cbd5e1', background: '#f8fafc' }}>{ans.val || '-'}</td>;
-                                        }
-                                        if (ans.isCorrect) {
-                                            return <td key={num} style={{ borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}></td>;
-                                        }
-                                        return (
-                                            <td key={num} style={{ padding: '6px', textAlign: 'center', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', background: '#fee2e2', color: '#b91c1c', fontWeight: 600 }}>
-                                                {ans.val}
-                                            </td>
-                                        );
-                                    })}
-                                </tr>
-                            )) : (
-                                <tr>
-                                    <td colSpan={50} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Chưa có dữ liệu. Vui lòng tải file từ ZipGrade.</td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div style={{ display: 'flex', height: '100%', background: '#f8fafc', overflow: 'hidden' }}>
             <div style={{ width: '220px', background: 'white', borderRight: '1px solid #e2e8f0', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1200,6 +1286,17 @@ const RankingView = () => {
                     <Sigma size={18} /> Sort Ngang
                 </button>
                 <button 
+                    onClick={() => setSubTab('chart')}
+                    style={{ 
+                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        background: subTab === 'chart' ? '#eff6ff' : 'transparent',
+                        color: subTab === 'chart' ? '#1e3a8a' : '#64748b', fontWeight: subTab === 'chart' ? 600 : 500,
+                        display: 'flex', alignItems: 'center', gap: '10px'
+                    }}
+                >
+                    <TrendingUp size={18} /> Biểu đồ
+                </button>
+                <button 
                     onClick={() => setSubTab('cloud')}
                     style={{ 
                         padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
@@ -1211,63 +1308,7 @@ const RankingView = () => {
                     <Cloud size={18} /> Đồng bộ Cloud
                 </button>
 
-                <div style={{ height: '1px', background: '#e2e8f0', margin: '10px 0' }}></div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '10px' }}>Công cụ Chấm</div>
-                <button 
-                    onClick={() => setSubTab('math-grading')}
-                    style={{ 
-                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: subTab === 'math-grading' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'math-grading' ? '#1d4ed8' : '#64748b', fontWeight: subTab === 'math-grading' ? 600 : 500,
-                        display: 'flex', alignItems: 'center', gap: '10px'
-                    }}
-                >
-                    <Calculator size={18} /> Điểm Toán
-                </button>
-                <button 
-                    onClick={() => setSubTab('science-grading')}
-                    style={{ 
-                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: subTab === 'science-grading' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'science-grading' ? '#0891b2' : '#64748b', fontWeight: subTab === 'science-grading' ? 600 : 500,
-                        display: 'flex', alignItems: 'center', gap: '10px'
-                    }}
-                >
-                    <Atom size={18} /> Lý, Hóa, Sinh
-                </button>
-                <button 
-                    onClick={() => setSubTab('it-grading')}
-                    style={{ 
-                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: subTab === 'it-grading' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'it-grading' ? '#7c3aed' : '#64748b', fontWeight: subTab === 'it-grading' ? 600 : 500,
-                        display: 'flex', alignItems: 'center', gap: '10px'
-                    }}
-                >
-                    <Monitor size={18} /> Điểm Tin
-                </button>
-                <button 
-                    onClick={() => setSubTab('history-grading')}
-                    style={{ 
-                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: subTab === 'history-grading' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'history-grading' ? '#c2410c' : '#64748b', fontWeight: subTab === 'history-grading' ? 600 : 500,
-                        display: 'flex', alignItems: 'center', gap: '10px'
-                    }}
-                >
-                    <ScrollText size={18} /> Điểm Sử
-                </button>
-                <button 
-                    onClick={() => setSubTab('english-grading')}
-                    style={{ 
-                        padding: '12px', borderRadius: '8px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: subTab === 'english-grading' ? '#eff6ff' : 'transparent',
-                        color: subTab === 'english-grading' ? '#15803d' : '#64748b', fontWeight: subTab === 'english-grading' ? 600 : 500,
-                        display: 'flex', alignItems: 'center', gap: '10px'
-                    }}
-                >
-                    <Globe size={18} /> Điểm Anh
-                </button>
+
             </div>
 
             <div style={{ flex: 1, padding: '24px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -1442,6 +1483,7 @@ const RankingView = () => {
                                  {id: 'chem', label: 'Hóa'},
                                  {id: 'eng', label: 'Anh'},
                                  {id: 'bio', label: 'Sinh'},
+                                 {id: 'custom', label: 'Kết hợp'},
                                  {id: 'A', label: 'Khối A (T-L-H)'},
                                  {id: 'A1', label: 'Khối A1 (T-L-A)'},
                                  {id: 'B', label: 'Khối B (T-H-S)'},
@@ -1460,6 +1502,28 @@ const RankingView = () => {
                                     {tab.label}
                                  </button>
                              ))}
+                             
+                             {summaryTab === 'custom' && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '6px 12px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+                                      <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>Môn kết hợp:</span>
+                                      {[
+                                          { id: 'math', label: 'Toán' },
+                                          { id: 'phys', label: 'Lí' },
+                                          { id: 'chem', label: 'Hóa' },
+                                          { id: 'eng', label: 'Anh' }
+                                      ].map(sub => (
+                                          <label key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#1e3a8a', cursor: 'pointer', fontWeight: 600 }}>
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={customSubjects[sub.id as keyof typeof customSubjects]} 
+                                                  onChange={(e) => setCustomSubjects(prev => ({ ...prev, [sub.id]: e.target.checked }))}
+                                                  style={{ cursor: 'pointer', width: '15px', height: '15px' }}
+                                              />
+                                              {sub.label}
+                                          </label>
+                                      ))}
+                                  </div>
+                             )}
                              
                              <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
                                 {renderMultiSelect()}
@@ -1553,20 +1617,20 @@ const RankingView = () => {
                 )}
                 
                 {subTab === 'cloud' && (
-                    <div style={{ height: '100%', display: 'flex', gap: '20px' }}>
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+                        <div style={{ width: '100%', maxWidth: '600px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             <div style={{ background: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                                     <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}>
                                         <Share2 size={24} />
                                     </div>
                                     <div>
-                                        <h3 style={{ margin: 0, color: '#1e293b' }}>Cấu hình kết nối Google Sheets</h3>
+                                        <h3 style={{ margin: 0, color: '#1e293b', fontSize: '18px', fontWeight: 600 }}>Cấu hình kết nối Google Sheets</h3>
                                         <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Kết nối để đồng bộ dữ liệu điểm và học sinh lên đám mây.</p>
                                     </div>
                                 </div>
                                 
-                                <div style={{ marginBottom: '16px' }}>
+                                <div style={{ marginBottom: '24px' }}>
                                     <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, fontSize: '14px', color: '#475569' }}>
                                         Google Apps Script Web App URL
                                     </label>
@@ -1589,25 +1653,6 @@ const RankingView = () => {
                                         >
                                             <Copy size={18} />
                                         </button>
-                                    </div>
-                                </div>
-                                
-                                {/* New Section: Sharing Guide */}
-                                <div style={{ padding: '12px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #dbeafe', marginBottom: '16px', fontSize: '13px', color: '#1e40af' }}>
-                                    <div style={{ fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <Laptop size={14} /> Làm sao để đồng bộ với máy khác?
-                                    </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', padding: '10px 0' }}>
-                                        <div style={{ padding: '6px 12px', background: 'white', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: 600 }}>Máy A (Bạn)</div>
-                                        <ArrowRight size={14} color="#3b82f6" />
-                                        <div style={{ padding: '6px 12px', background: '#dcfce7', borderRadius: '6px', border: '1px solid #86efac', fontWeight: 600, color: '#166534' }}>Google Sheet (Qua URL trên)</div>
-                                        <ArrowRight size={14} color="#3b82f6" />
-                                        <div style={{ padding: '6px 12px', background: 'white', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: 600 }}>Máy B (Người khác)</div>
-                                    </div>
-                                    <p style={{ margin: '4px 0 0 0' }}>Chỉ cần gửi <b>URL trên</b> cho người khác. Họ dán vào ô bên trên ở máy họ là có thể "Tải dữ liệu" về.</p>
-                                    
-                                    <div style={{ marginTop: '10px', padding: '8px', background: '#fee2e2', borderRadius: '6px', color: '#991b1b', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <AlertTriangle size={14} /> Lưu ý: URL phải kết thúc bằng "/exec", không dùng link "/edit".
                                     </div>
                                 </div>
 
@@ -1645,7 +1690,7 @@ const RankingView = () => {
                             </div>
 
                              <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
-                                <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px' }}>Trạng thái dữ liệu hiện tại</h4>
+                                <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px', fontWeight: 600 }}>Trạng thái dữ liệu hiện tại</h4>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                                     <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                                         <div style={{ fontSize: '12px', color: '#64748b' }}>Học sinh</div>
@@ -1658,59 +1703,284 @@ const RankingView = () => {
                                 </div>
                             </div>
                         </div>
-
-                        <div style={{ width: '400px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                            <div style={{ padding: '16px', background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <HelpCircle size={18} /> Hướng dẫn cài đặt Script
-                            </div>
-                            <div style={{ flex: 1, padding: '16px', overflowY: 'auto', fontSize: '13px', lineHeight: '1.5', color: '#475569' }}>
-                                <p style={{ marginTop: 0 }}>Để tính năng này hoạt động, bạn cần tạo một Google Apps Script gắn với Google Sheet của bạn:</p>
-                                <ol style={{ paddingLeft: '20px' }}>
-                                    <li>Mở Google Sheet của bạn.</li>
-                                    <li>Vào menu <b>Tiện ích mở rộng</b> &gt; <b>Apps Script</b>.</li>
-                                    <li>Xóa code cũ, copy đoạn mã bên dưới và dán vào.</li>
-                                    <li>Nhấn nút <b>Triển khai (Deploy)</b> &gt; <b>Tùy chọn triển khai mới</b>.</li>
-                                    <li>Chọn loại: <b>Ứng dụng web (Web app)</b>.</li>
-                                    <li>Cấu hình:
-                                        <ul style={{marginTop: '4px'}}>
-                                            <li><b>Thực thi dưới dạng:</b> Tôi (Me)</li>
-                                            <li><b>Ai có quyền truy cập:</b> Bất kỳ ai (Anyone)</li>
-                                        </ul>
-                                    </li>
-                                    <li>Nhấn Triển khai, cấp quyền truy cập, sau đó Copy URL nhận được dán vào ô bên trái.</li>
-                                </ol>
-                                
-                                <div style={{ position: 'relative', marginTop: '16px' }}>
-                                    <pre style={{ 
-                                        background: '#1e293b', color: '#e2e8f0', padding: '12px', borderRadius: '8px', 
-                                        overflowX: 'auto', fontSize: '11px', fontFamily: 'monospace', margin: 0, height: '300px'
-                                    }}>
-                                        {SCRIPT_TEMPLATE}
-                                    </pre>
-                                    <button 
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(SCRIPT_TEMPLATE);
-                                            alert("Đã copy code vào bộ nhớ đệm!");
-                                        }}
-                                        style={{ 
-                                            position: 'absolute', top: '8px', right: '8px', padding: '6px 12px', 
-                                            background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', 
-                                            borderRadius: '4px', cursor: 'pointer', fontSize: '11px', display: 'flex', gap: '4px', alignItems: 'center'
-                                        }}
+                    </div>
+                )}
+                
+                {subTab === 'chart' && (
+                    <div style={{ display: 'flex', gap: '20px', height: '100%', padding: '10px', overflow: 'hidden', flex: 1 }}>
+                        {/* Left Column: Chart Controls and SVG */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                            
+                            {/* Controls row */}
+                            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '16px' }}>
+                                {/* Choose class */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Lớp học</span>
+                                    <select
+                                        value={selectedChartClass}
+                                        onChange={(e) => setSelectedChartClass(e.target.value)}
+                                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: 'white', minWidth: '130px', cursor: 'pointer', fontWeight: 500, color: '#334155' }}
                                     >
-                                        <Copy size={12} /> Copy Code
+                                        {uniqueClasses.map(cls => (
+                                            <option key={cls} value={cls}>{cls}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Choose rank score type */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Điểm tính hạng</span>
+                                    <select
+                                        value={rankScoreType}
+                                        onChange={(e) => setRankScoreType(e.target.value as any)}
+                                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: 'white', minWidth: '180px', cursor: 'pointer', fontWeight: 500, color: '#334155' }}
+                                    >
+                                        <option value="total">Tổng Khối (Tự động)</option>
+                                        <option value="math">Toán</option>
+                                        <option value="phys">Lí</option>
+                                        <option value="chem">Hóa</option>
+                                        <option value="eng">Anh</option>
+                                        <option value="bio">Sinh</option>
+                                        <option value="A">Khối A (T-L-H)</option>
+                                        <option value="A1">Khối A1 (T-L-A)</option>
+                                        <option value="B">Khối B (T-H-S)</option>
+                                    </select>
+                                </div>
+
+                                {/* Choose comparison group */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Quy chiếu xếp hạng</span>
+                                    <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden' }}>
+                                        {[
+                                            { id: 'class', label: 'Riêng trong Lớp' },
+                                            { id: 'block', label: 'Trong Khối' },
+                                            { id: 'school', label: 'Toàn Trường' }
+                                        ].map(mode => (
+                                            <button
+                                                key={mode.id}
+                                                onClick={() => setComparisonMode(mode.id as any)}
+                                                style={{
+                                                    padding: '8px 16px', border: 'none', fontSize: '13px', cursor: 'pointer', fontWeight: 600,
+                                                    background: comparisonMode === mode.id ? '#1e3a8a' : 'white',
+                                                    color: comparisonMode === mode.id ? 'white' : '#475569',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                {mode.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Full scale toggle */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Trục đứng (Thứ hạng)</span>
+                                    <label style={{ 
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', 
+                                        borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', 
+                                        background: 'white', cursor: 'pointer', fontWeight: 500, color: '#334155',
+                                        minHeight: '38px', userSelect: 'none'
+                                    }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={useFullScale}
+                                            onChange={(e) => setUseFullScale(e.target.checked)}
+                                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                        />
+                                        Hiển thị hết sỉ số ({
+                                            comparisonMode === 'class' 
+                                                ? students.filter(s => s && s.class === selectedChartClass).length 
+                                                : comparisonMode === 'block'
+                                                    ? students.filter(s => s && getBlockType(s.class) === getBlockType(selectedChartClass)).length
+                                                    : students.length
+                                        })
+                                    </label>
+                                </div>
+
+                                {/* Show all labels toggle */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Số hạng trên đường</span>
+                                    <label style={{ 
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', 
+                                        borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', 
+                                        background: 'white', cursor: 'pointer', fontWeight: 500, color: '#334155',
+                                        minHeight: '38px', userSelect: 'none'
+                                    }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={showAllLabels}
+                                            onChange={(e) => setShowAllLabels(e.target.checked)}
+                                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                        />
+                                        Hiện số hạng
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Chart Area */}
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#1e293b' }}>
+                                        Biểu đồ quá trình học tập lớp {selectedChartClass} ({activeExams.length} lần thi)
+                                    </h3>
+                                    <span style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>
+                                        * Trục đứng biểu diễn thứ hạng (hạng nhỏ ở trên là cao hơn)
+                                    </span>
+                                </div>
+                                <div style={{ height: '380px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', overflow: 'hidden' }}>
+                                    {activeExams.length === 0 ? (
+                                        <div style={{ textAlign: 'center', color: '#94a3b8' }}>
+                                            <TrendingUp size={48} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+                                            <p style={{ margin: 0, fontWeight: 600 }}>Chưa có dữ liệu điểm để vẽ biểu đồ cho lớp này.</p>
+                                            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#cbd5e1' }}>Vui lòng kiểm tra dữ liệu điểm trong tab "Dữ liệu điểm".</p>
+                                        </div>
+                                    ) : (
+                                        <ResponsiveSVGChart 
+                                            students={students}
+                                            chartClassStudents={chartClassStudents}
+                                            activeExams={activeExams}
+                                            rankingMap={rankingMap}
+                                            visibleStudents={visibleStudents}
+                                            hoveredStudentId={hoveredStudentId}
+                                            setHoveredStudentId={setHoveredStudentId}
+                                            useFullScale={useFullScale}
+                                            comparisonMode={comparisonMode}
+                                            selectedChartClass={selectedChartClass}
+                                            getStudentColor={getStudentColor}
+                                            showAllLabels={showAllLabels}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right Column: Student List with toggleable checkbox */}
+                        <div style={{ width: '320px', display: 'flex', flexDirection: 'column', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                            <div style={{ padding: '16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#334155', fontWeight: 700 }}>
+                                    Học sinh ({chartClassStudents.length})
+                                </h4>
+                                
+                                {/* Search filter */}
+                                <input 
+                                    type="text" 
+                                    placeholder="Tìm tên học sinh..."
+                                    value={chartSearch}
+                                    onChange={(e) => setChartSearch(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', marginBottom: '12px' }}
+                                />
+
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        onClick={() => {
+                                            const newVisible: Record<string, boolean> = {};
+                                            chartClassStudents.forEach(s => newVisible[s.id] = true);
+                                            setVisibleStudents(newVisible);
+                                        }}
+                                        style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                    >
+                                        Hiện hết
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setVisibleStudents({});
+                                        }}
+                                        style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                    >
+                                        Ẩn hết
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const studentsWithAverages = chartClassStudents.map(s => {
+                                                const scs: number[] = [];
+                                                for (let i = 1; i <= 40; i++) {
+                                                    const score = getStudentExamScore(s.id, i, rankScoreType);
+                                                    if (score !== undefined) scs.push(score);
+                                                }
+                                                const avg = scs.length > 0 ? (scs.reduce((a, b) => a + b, 0) / scs.length) : 0;
+                                                return { id: s.id, avg };
+                                            }).sort((a, b) => b.avg - a.avg);
+
+                                            const newVisible: Record<string, boolean> = {};
+                                            studentsWithAverages.forEach((item, idx) => {
+                                                newVisible[item.id] = idx < 10;
+                                            });
+                                            setVisibleStudents(newVisible);
+                                        }}
+                                        style={{ flex: 1.2, padding: '6px 8px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', fontSize: '11px', fontWeight: 700, color: '#1e40af', cursor: 'pointer' }}
+                                    >
+                                        Hiện Top 10
                                     </button>
                                 </div>
+                            </div>
+
+                            <div style={{ flex: 1, overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {chartClassStudents
+                                    .filter(s => s.fullName.toLowerCase().includes(chartSearch.toLowerCase()) || s.id.includes(chartSearch))
+                                    .map((s) => {
+                                        const idxInClass = chartClassStudents.findIndex(x => x.id === s.id);
+                                        const color = getStudentColor(idxInClass);
+                                        const isChecked = !!visibleStudents[s.id];
+                                        const isHovered = hoveredStudentId === s.id;
+                                        
+                                        const studentRanks: number[] = [];
+                                        activeExams.forEach(ex => {
+                                            const r = rankingMap[ex]?.[s.id]?.rank;
+                                            if (r !== undefined) studentRanks.push(r);
+                                        });
+                                        const avgRank = studentRanks.length > 0 ? (studentRanks.reduce((a, b) => a + b, 0) / studentRanks.length).toFixed(1) : '-';
+
+                                        return (
+                                            <div
+                                                key={s.id}
+                                                onMouseEnter={() => setHoveredStudentId(s.id)}
+                                                onMouseLeave={() => setHoveredStudentId(null)}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '8px',
+                                                    background: isHovered ? '#f1f5f9' : 'transparent',
+                                                    cursor: 'pointer', transition: 'background 0.1s ease',
+                                                    border: isHovered ? '1px solid #e2e8f0' : '1px solid transparent'
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isChecked}
+                                                    onChange={(e) => {
+                                                        setVisibleStudents(prev => ({ ...prev, [s.id]: e.target.checked }));
+                                                    }}
+                                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                                />
+                                                <div 
+                                                    style={{ width: '12px', height: '12px', borderRadius: '50%', background: color, flexShrink: 0 }}
+                                                    onClick={() => {
+                                                        setVisibleStudents(prev => ({ ...prev, [s.id]: !isChecked }));
+                                                    }}
+                                                />
+                                                <div 
+                                                    style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}
+                                                    onClick={() => {
+                                                        setVisibleStudents(prev => ({ ...prev, [s.id]: !isChecked }));
+                                                    }}
+                                                >
+                                                    <span style={{ fontSize: '13px', fontWeight: isChecked ? 600 : 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {s.fullName}
+                                                    </span>
+                                                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                                                        SBD: {s.id}
+                                                    </span>
+                                                </div>
+                                                <span style={{ fontSize: '11px', color: '#475569', background: '#f8fafc', padding: '3px 8px', borderRadius: '4px', border: '1px solid #f1f5f9', fontWeight: 600 }}>
+                                                    Hạng: {avgRank}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
                             </div>
                         </div>
                     </div>
                 )}
                 
-                {subTab === 'math-grading' && renderGradingTable(mathResults, 'math', 'Chấm Điểm Toán (40 Câu)', 40)}
-                {subTab === 'science-grading' && renderGradingTable(scienceResults, 'science', 'Chấm Điểm KHTN (Lý/Hóa/Sinh)', 40)}
-                {subTab === 'it-grading' && renderGradingTable(itResults, 'it', 'Chấm Điểm Tin Học (40 Câu)', 40)}
-                {subTab === 'history-grading' && renderGradingTable(historyResults, 'history', 'Chấm Điểm Lịch Sử (40 Câu)', 40)}
-                {subTab === 'english-grading' && renderGradingTable(englishResults, 'english', 'Chấm Điểm Tiếng Anh (50 Câu)', 50)}
+
 
             </div>
         </div>
