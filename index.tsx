@@ -523,41 +523,47 @@ const ResponsiveSVGChart = ({
                 })}
             </svg>
 
-            {tooltip && (
-                <div 
-                    style={{
-                        position: 'absolute',
-                        left: `${tooltip.x + 12}px`,
-                        top: `${tooltip.y - 45}px`,
-                        background: 'rgba(15, 23, 42, 0.95)',
-                        color: 'white',
-                        padding: '10px 14px',
-                        borderRadius: '8px',
-                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
-                        fontSize: '12px',
-                        zIndex: 1000,
-                        pointerEvents: 'none',
-                        borderLeft: `4px solid ${tooltip.color}`,
-                        minWidth: '160px'
-                    }}
-                >
-                    <div style={{ fontWeight: 700, marginBottom: '4px', fontSize: '13px' }}>{tooltip.studentName}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
-                        <span>Lần thi:</span>
-                        <span style={{ fontWeight: 600, color: 'white' }}>KT {tooltip.exam}</span>
+            {tooltip && (() => {
+                const tooltipWidth = 170;
+                const isTooFarRight = tooltip.x + tooltipWidth + 12 > width;
+                const tooltipLeft = isTooFarRight ? tooltip.x - tooltipWidth - 12 : tooltip.x + 12;
+                const tooltipTop = tooltip.y - 50 < 10 ? tooltip.y + 15 : tooltip.y - 50;
+                return (
+                    <div 
+                        style={{
+                            position: 'absolute',
+                            left: `${tooltipLeft}px`,
+                            top: `${tooltipTop}px`,
+                            background: 'rgba(15, 23, 42, 0.95)',
+                            color: 'white',
+                            padding: '10px 14px',
+                            borderRadius: '8px',
+                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+                            fontSize: '12px',
+                            zIndex: 1000,
+                            pointerEvents: 'none',
+                            borderLeft: `4px solid ${tooltip.color}`,
+                            minWidth: `${tooltipWidth}px`
+                        }}
+                    >
+                        <div style={{ fontWeight: 700, marginBottom: '4px', fontSize: '13px' }}>{tooltip.studentName}</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
+                            <span>Lần thi:</span>
+                            <span style={{ fontWeight: 600, color: 'white' }}>KT {tooltip.exam}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
+                            <span>Điểm số:</span>
+                            <span style={{ fontWeight: 600, color: '#f59e0b' }}>{tooltip.score}đ</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1' }}>
+                            <span>Xếp hạng:</span>
+                            <span style={{ fontWeight: 700, color: '#10b981' }}>
+                                Hạng {tooltip.rank}/{tooltip.total}
+                            </span>
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1', marginBottom: '2px' }}>
-                        <span>Điểm số:</span>
-                        <span style={{ fontWeight: 600, color: '#f59e0b' }}>{tooltip.score}đ</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', color: '#cbd5e1' }}>
-                        <span>Xếp hạng:</span>
-                        <span style={{ fontWeight: 700, color: '#10b981' }}>
-                            Hạng {tooltip.rank}/{tooltip.total}
-                        </span>
-                    </div>
-                </div>
-            )}
+                );
+            })()}
         </div>
     );
 };
@@ -584,6 +590,7 @@ const RankingView = () => {
     const [chartSearch, setChartSearch] = useState('');
     const [useFullScale, setUseFullScale] = useState<boolean>(true);
     const [showAllLabels, setShowAllLabels] = useState<boolean>(true);
+    const [chartHeight, setChartHeight] = useState<number>(380);
     
     // Cloud State
     const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFwQd_LBj4GrNG5P-BlmHKBO4XLrhx6aN0dutYYbTSK2GJRL04J1OSLFc09Gcc3Qlt/exec";
@@ -1815,6 +1822,26 @@ const RankingView = () => {
                                         Hiện số hạng
                                     </label>
                                 </div>
+
+                                {/* Chart Height Slider */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Chiều cao biểu đồ: {chartHeight}px</span>
+                                    <div style={{ 
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', 
+                                        borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', 
+                                        background: 'white', minHeight: '38px', userSelect: 'none'
+                                    }}>
+                                        <input
+                                            type="range"
+                                            min="250"
+                                            max="850"
+                                            step="10"
+                                            value={chartHeight}
+                                            onChange={(e) => setChartHeight(Number(e.target.value))}
+                                            style={{ cursor: 'pointer', flex: 1 }}
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Chart Area */}
@@ -1827,7 +1854,7 @@ const RankingView = () => {
                                         * Trục đứng biểu diễn thứ hạng (hạng nhỏ ở trên là cao hơn)
                                     </span>
                                 </div>
-                                <div style={{ height: '380px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', overflow: 'hidden' }}>
+                                <div style={{ height: `${chartHeight}px`, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', overflow: 'hidden' }}>
                                     {activeExams.length === 0 ? (
                                         <div style={{ textAlign: 'center', color: '#94a3b8' }}>
                                             <TrendingUp size={48} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
