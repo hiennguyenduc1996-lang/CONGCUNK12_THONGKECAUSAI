@@ -196,7 +196,7 @@ const ResponsiveSVGChart = ({
     setHoveredStudentId,
     useFullScale,
     comparisonMode,
-    selectedChartClass,
+    selectedChartClasses,
     getStudentColor,
     showAllLabels
 }: {
@@ -209,7 +209,7 @@ const ResponsiveSVGChart = ({
     setHoveredStudentId: (id: string | null) => void;
     useFullScale: boolean;
     comparisonMode: 'class' | 'block' | 'school';
-    selectedChartClass: string;
+    selectedChartClasses: string[];
     getStudentColor: (idx: number) => string;
     showAllLabels: boolean;
 }) => {
@@ -249,14 +249,19 @@ const ResponsiveSVGChart = ({
 
     const comparisonGroupSize = useMemo(() => {
         if (comparisonMode === 'class') {
-            return students.filter(s => s && s.class === selectedChartClass).length;
+            let maxCount = 0;
+            selectedChartClasses.forEach(c => {
+                const count = students.filter(s => s && s.class === c).length;
+                if (count > maxCount) maxCount = count;
+            });
+            return maxCount || students.filter(s => s && selectedChartClasses.includes(s.class)).length;
         } else if (comparisonMode === 'block') {
-            const currentBlock = getBlockType(selectedChartClass);
-            return students.filter(s => s && getBlockType(s.class) === currentBlock).length;
+            const currentBlocks = Array.from(new Set(selectedChartClasses.map(c => getBlockType(c))));
+            return students.filter(s => s && currentBlocks.includes(getBlockType(s.class))).length;
         } else {
             return students.length;
         }
-    }, [students, selectedChartClass, comparisonMode]);
+    }, [students, selectedChartClasses, comparisonMode]);
 
     const maxRankValue = useMemo(() => {
         if (useFullScale) {
@@ -582,7 +587,9 @@ const RankingView = () => {
     const [customSubjects, setCustomSubjects] = useState({ math: false, phys: true, chem: false, eng: true });
 
     // Chart tab states
-    const [selectedChartClass, setSelectedChartClass] = useState<string>('');
+    const [selectedChartClasses, setSelectedChartClasses] = useState<string[]>([]);
+    const [isChartClassFilterOpen, setIsChartClassFilterOpen] = useState(false);
+    const chartClassFilterRef = useRef<HTMLDivElement>(null);
     const [comparisonMode, setComparisonMode] = useState<'class' | 'block' | 'school'>('class');
     const [rankScoreType, setRankScoreType] = useState<'math' | 'phys' | 'chem' | 'eng' | 'bio' | 'A' | 'A1' | 'B' | 'total'>('total');
     const [visibleStudents, setVisibleStudents] = useState<Record<string, boolean>>({});
@@ -598,16 +605,28 @@ const RankingView = () => {
     const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [syncMessage, setSyncMessage] = useState('');
 
-    // Multi-select Filter
+    // Multi-select Class Filter (Summary & Sort Ngang)
     const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const filterRef = useRef<HTMLDivElement>(null);
 
-    // Click outside to close filter
+    // Multi-select Student Filter (Summary & Sort Ngang)
+    const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+    const [isStudentFilterOpen, setIsStudentFilterOpen] = useState(false);
+    const studentFilterRef = useRef<HTMLDivElement>(null);
+    const [studentSearch, setStudentSearch] = useState('');
+
+    // Click outside to close filters
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
                 setIsFilterOpen(false);
+            }
+            if (studentFilterRef.current && !studentFilterRef.current.contains(event.target as Node)) {
+                setIsStudentFilterOpen(false);
+            }
+            if (chartClassFilterRef.current && !chartClassFilterRef.current.contains(event.target as Node)) {
+                setIsChartClassFilterOpen(false);
             }
         };
         document.addEventListener("mousedown", handleClickOutside);
@@ -881,10 +900,14 @@ const RankingView = () => {
     }, [students]);
 
     useEffect(() => {
-        if (uniqueClasses.length > 0 && (!selectedChartClass || !uniqueClasses.includes(selectedChartClass))) {
-            setSelectedChartClass(uniqueClasses[0]);
+        if (uniqueClasses.length > 0 && selectedChartClasses.length === 0) {
+            setSelectedChartClasses([uniqueClasses[0]]);
         }
-    }, [uniqueClasses, selectedChartClass]);
+    }, [uniqueClasses, selectedChartClasses]);
+
+    const activeChartClasses = useMemo(() => {
+        return selectedChartClasses.length > 0 ? selectedChartClasses : (uniqueClasses.length > 0 ? [uniqueClasses[0]] : []);
+    }, [selectedChartClasses, uniqueClasses]);
 
     // --- CHART TAB CALCULATIONS & HELPERS ---
 
@@ -987,8 +1010,8 @@ const RankingView = () => {
     }, [students, examData, rankScoreType, comparisonMode]);
 
     const chartClassStudents = useMemo(() => {
-        return students.filter(s => s && s.class === selectedChartClass);
-    }, [students, selectedChartClass]);
+        return students.filter(s => s && activeChartClasses.includes(s.class));
+    }, [students, activeChartClasses]);
 
     const activeExams = useMemo(() => {
         const exams: number[] = [];
@@ -1019,7 +1042,7 @@ const RankingView = () => {
             });
             setVisibleStudents(initialVisible);
         }
-    }, [selectedChartClass, rankScoreType, students]);
+    }, [activeChartClasses, rankScoreType, students]);
 
     const colorsList = [
         '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
@@ -1029,11 +1052,12 @@ const RankingView = () => {
     ];
     const getStudentColor = (idx: number) => colorsList[idx % colorsList.length];
 
-
-
     const getComputedData = useMemo(() => {
         if (!Array.isArray(students)) return [];
-        const filteredStudents = selectedClasses.length > 0 ? students.filter(s => s && selectedClasses.includes(s.class)) : students;
+        let filteredStudents = selectedClasses.length > 0 ? students.filter(s => s && selectedClasses.includes(s.class)) : students;
+        if (selectedStudentIds.length > 0) {
+            filteredStudents = filteredStudents.filter(s => s && selectedStudentIds.includes(s.id));
+        }
         if (!filteredStudents.length) return [];
 
         const calcAvg = (values: number[]) => {
@@ -1180,6 +1204,9 @@ const RankingView = () => {
         if (selectedClasses.length > 0) {
             list = list.filter(s => s && selectedClasses.includes(s.class));
         }
+        if (selectedStudentIds.length > 0) {
+            list = list.filter(s => s && selectedStudentIds.includes(s.id));
+        }
         return list.map(s => {
              if (!s) return null;
              return {
@@ -1187,8 +1214,16 @@ const RankingView = () => {
                 scores: examData[activeExamTime]?.[s.id] || {}
             };
         }).filter(s => s !== null);
-    }, [students, selectedClasses, examData, activeExamTime]);
+    }, [students, selectedClasses, selectedStudentIds, examData, activeExamTime]);
     // ---------------------------------------
+
+    const availableStudents = useMemo(() => {
+        let list = students || [];
+        if (selectedClasses.length > 0) {
+            list = list.filter(s => s && selectedClasses.includes(s.class));
+        }
+        return list;
+    }, [students, selectedClasses]);
 
     const renderMultiSelect = () => (
         <div style={{ position: 'relative' }} ref={filterRef}>
@@ -1243,6 +1278,79 @@ const RankingView = () => {
             )}
         </div>
     );
+
+    const renderStudentSelect = () => {
+        const displayList = availableStudents.filter(s => 
+            s.fullName.toLowerCase().includes(studentSearch.toLowerCase()) || 
+            s.id.includes(studentSearch) ||
+            s.class.toLowerCase().includes(studentSearch.toLowerCase())
+        );
+
+        return (
+            <div style={{ position: 'relative' }} ref={studentFilterRef}>
+                <button
+                    onClick={() => setIsStudentFilterOpen(!isStudentFilterOpen)}
+                    style={{
+                        padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white',
+                        fontSize: '13px', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '160px'
+                    }}
+                >
+                    <Users size={14} />
+                    {selectedStudentIds.length === 0 ? "Tất cả học sinh" : `Đang chọn ${selectedStudentIds.length} học sinh`}
+                </button>
+                
+                {isStudentFilterOpen && (
+                    <div style={{
+                        position: 'absolute', top: '100%', right: 0, marginTop: '5px', background: 'white',
+                        border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        zIndex: 100, width: '280px', maxHeight: '350px', display: 'flex', flexDirection: 'column', padding: '10px'
+                    }}>
+                        <input
+                            type="text"
+                            placeholder="Tìm tên, SBD, lớp..."
+                            value={studentSearch}
+                            onChange={(e) => setStudentSearch(e.target.value)}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', marginBottom: '8px' }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px' }}>
+                            <span 
+                                style={{ cursor: 'pointer', color: '#3b82f6', fontWeight: 600 }}
+                                onClick={() => setSelectedStudentIds(availableStudents.map(s => s.id))}
+                            >
+                                Chọn tất cả
+                            </span>
+                            <span 
+                                style={{ cursor: 'pointer', color: '#64748b' }}
+                                onClick={() => setSelectedStudentIds([])}
+                            >
+                                Bỏ chọn
+                            </span>
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', maxHeight: '220px' }}>
+                            {displayList.map(s => (
+                                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', fontSize: '12px' }}>
+                                    <input
+                                        type="checkbox"
+                                        id={`filter-std-${s.id}`}
+                                        checked={selectedStudentIds.includes(s.id)}
+                                        onChange={(e) => {
+                                            if (e.target.checked) setSelectedStudentIds(prev => [...prev, s.id]);
+                                            else setSelectedStudentIds(prev => prev.filter(id => id !== s.id));
+                                        }}
+                                        style={{ cursor: 'pointer' }}
+                                    />
+                                    <label htmlFor={`filter-std-${s.id}`} style={{ cursor: 'pointer', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <span style={{ fontWeight: 600 }}>{s.fullName}</span> <span style={{ color: '#64748b', fontSize: '11px' }}>({s.class})</span>
+                                    </label>
+                                </div>
+                            ))}
+                            {displayList.length === 0 && <div style={{ color: '#94a3b8', fontSize: '12px', fontStyle: 'italic', padding: '8px 0' }}>Không tìm thấy học sinh</div>}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div style={{ display: 'flex', height: '100%', background: '#f8fafc', overflow: 'hidden' }}>
@@ -1534,6 +1642,7 @@ const RankingView = () => {
                              
                              <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
                                 {renderMultiSelect()}
+                                {renderStudentSelect()}
                                  <button
                                    onClick={() => exportToExcel('summary-table', `Tong_Ket_${summaryTab}`)}
                                    style={{
@@ -1720,18 +1829,58 @@ const RankingView = () => {
                             
                             {/* Controls row */}
                             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '16px' }}>
-                                {/* Choose class */}
+                                {/* Choose class (multi-select) */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                     <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Lớp học</span>
-                                    <select
-                                        value={selectedChartClass}
-                                        onChange={(e) => setSelectedChartClass(e.target.value)}
-                                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: 'white', minWidth: '130px', cursor: 'pointer', fontWeight: 500, color: '#334155' }}
-                                    >
-                                        {uniqueClasses.map(cls => (
-                                            <option key={cls} value={cls}>{cls}</option>
-                                        ))}
-                                    </select>
+                                    <div style={{ position: 'relative' }} ref={chartClassFilterRef}>
+                                        <button
+                                            onClick={() => setIsChartClassFilterOpen(!isChartClassFilterOpen)}
+                                            style={{
+                                                padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white',
+                                                fontSize: '13px', color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '150px', fontWeight: 500
+                                            }}
+                                        >
+                                            <Filter size={14} />
+                                            {activeChartClasses.length === 0 ? "Chọn lớp" : activeChartClasses.length === 1 ? `Lớp ${activeChartClasses[0]}` : `Đang chọn ${activeChartClasses.length} lớp`}
+                                        </button>
+                                        {isChartClassFilterOpen && (
+                                            <div style={{
+                                                position: 'absolute', top: '100%', left: 0, marginTop: '5px', background: 'white',
+                                                border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                                zIndex: 100, width: '220px', maxHeight: '280px', overflowY: 'auto', padding: '10px'
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px' }}>
+                                                    <span 
+                                                        style={{ cursor: 'pointer', color: '#3b82f6', fontWeight: 600 }}
+                                                        onClick={() => setSelectedChartClasses(uniqueClasses)}
+                                                    >
+                                                        Chọn tất cả
+                                                    </span>
+                                                    <span 
+                                                        style={{ cursor: 'pointer', color: '#64748b' }}
+                                                        onClick={() => setSelectedChartClasses([])}
+                                                    >
+                                                        Bỏ chọn
+                                                    </span>
+                                                </div>
+                                                {uniqueClasses.map(cls => (
+                                                    <div key={cls} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', fontSize: '13px' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            id={`chart-cls-${cls}`}
+                                                            checked={activeChartClasses.includes(cls)}
+                                                            onChange={(e) => {
+                                                                if (e.target.checked) setSelectedChartClasses(prev => [...prev, cls]);
+                                                                else setSelectedChartClasses(prev => prev.filter(c => c !== cls));
+                                                            }}
+                                                            style={{ cursor: 'pointer' }}
+                                                        />
+                                                        <label htmlFor={`chart-cls-${cls}`} style={{ cursor: 'pointer', flex: 1 }}>{cls}</label>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {/* Choose rank score type */}
@@ -1796,9 +1945,9 @@ const RankingView = () => {
                                         />
                                         Hiển thị hết sỉ số ({
                                             comparisonMode === 'class' 
-                                                ? students.filter(s => s && s.class === selectedChartClass).length 
+                                                ? students.filter(s => s && activeChartClasses.includes(s.class)).length 
                                                 : comparisonMode === 'block'
-                                                    ? students.filter(s => s && getBlockType(s.class) === getBlockType(selectedChartClass)).length
+                                                    ? students.filter(s => s && activeChartClasses.map(c => getBlockType(c)).includes(getBlockType(s.class))).length
                                                     : students.length
                                         })
                                     </label>
@@ -1848,7 +1997,7 @@ const RankingView = () => {
                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                     <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#1e293b' }}>
-                                        Biểu đồ quá trình học tập lớp {selectedChartClass} ({activeExams.length} lần thi)
+                                        Biểu đồ quá trình học tập lớp {activeChartClasses.join(', ')} ({activeExams.length} lần thi)
                                     </h3>
                                     <span style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>
                                         * Trục đứng biểu diễn thứ hạng (hạng nhỏ ở trên là cao hơn)
@@ -1872,7 +2021,7 @@ const RankingView = () => {
                                             setHoveredStudentId={setHoveredStudentId}
                                             useFullScale={useFullScale}
                                             comparisonMode={comparisonMode}
-                                            selectedChartClass={selectedChartClass}
+                                            selectedChartClasses={activeChartClasses}
                                             getStudentColor={getStudentColor}
                                             showAllLabels={showAllLabels}
                                         />
@@ -1897,47 +2046,73 @@ const RankingView = () => {
                                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', marginBottom: '12px' }}
                                 />
 
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button
-                                        onClick={() => {
-                                            const newVisible: Record<string, boolean> = {};
-                                            chartClassStudents.forEach(s => newVisible[s.id] = true);
-                                            setVisibleStudents(newVisible);
-                                        }}
-                                        style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-                                    >
-                                        Hiện hết
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setVisibleStudents({});
-                                        }}
-                                        style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-                                    >
-                                        Ẩn hết
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            const studentsWithAverages = chartClassStudents.map(s => {
-                                                const scs: number[] = [];
-                                                for (let i = 1; i <= 40; i++) {
-                                                    const score = getStudentExamScore(s.id, i, rankScoreType);
-                                                    if (score !== undefined) scs.push(score);
-                                                }
-                                                const avg = scs.length > 0 ? (scs.reduce((a, b) => a + b, 0) / scs.length) : 0;
-                                                return { id: s.id, avg };
-                                            }).sort((a, b) => b.avg - a.avg);
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                            onClick={() => {
+                                                const newVisible: Record<string, boolean> = {};
+                                                chartClassStudents.forEach(s => newVisible[s.id] = true);
+                                                setVisibleStudents(newVisible);
+                                            }}
+                                            style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                        >
+                                            Hiện hết
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setVisibleStudents({});
+                                            }}
+                                            style={{ flex: 1, padding: '6px 8px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                        >
+                                            Ẩn hết
+                                        </button>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                            onClick={() => {
+                                                const studentsWithAverages = chartClassStudents.map(s => {
+                                                    const scs: number[] = [];
+                                                    for (let i = 1; i <= 40; i++) {
+                                                        const score = getStudentExamScore(s.id, i, rankScoreType);
+                                                        if (score !== undefined) scs.push(score);
+                                                    }
+                                                    const avg = scs.length > 0 ? (scs.reduce((a, b) => a + b, 0) / scs.length) : 0;
+                                                    return { id: s.id, avg };
+                                                }).sort((a, b) => b.avg - a.avg);
 
-                                            const newVisible: Record<string, boolean> = {};
-                                            studentsWithAverages.forEach((item, idx) => {
-                                                newVisible[item.id] = idx < 10;
-                                            });
-                                            setVisibleStudents(newVisible);
-                                        }}
-                                        style={{ flex: 1.2, padding: '6px 8px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', fontSize: '11px', fontWeight: 700, color: '#1e40af', cursor: 'pointer' }}
-                                    >
-                                        Hiện Top 10
-                                    </button>
+                                                const newVisible: Record<string, boolean> = {};
+                                                studentsWithAverages.forEach((item, idx) => {
+                                                    newVisible[item.id] = idx < 10;
+                                                });
+                                                setVisibleStudents(newVisible);
+                                            }}
+                                            style={{ flex: 1, padding: '6px 8px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', fontSize: '11px', fontWeight: 700, color: '#1e40af', cursor: 'pointer' }}
+                                        >
+                                            Top 10 trên
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                const studentsWithAverages = chartClassStudents.map(s => {
+                                                    const scs: number[] = [];
+                                                    for (let i = 1; i <= 40; i++) {
+                                                        const score = getStudentExamScore(s.id, i, rankScoreType);
+                                                        if (score !== undefined) scs.push(score);
+                                                    }
+                                                    const avg = scs.length > 0 ? (scs.reduce((a, b) => a + b, 0) / scs.length) : 0;
+                                                    return { id: s.id, avg };
+                                                }).sort((a, b) => a.avg - b.avg);
+
+                                                const newVisible: Record<string, boolean> = {};
+                                                studentsWithAverages.forEach((item, idx) => {
+                                                    newVisible[item.id] = idx < 10;
+                                                });
+                                                setVisibleStudents(newVisible);
+                                            }}
+                                            style={{ flex: 1, padding: '6px 8px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', fontSize: '11px', fontWeight: 700, color: '#991b1b', cursor: 'pointer' }}
+                                        >
+                                            Top 10 dưới
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1989,8 +2164,13 @@ const RankingView = () => {
                                                         setVisibleStudents(prev => ({ ...prev, [s.id]: !isChecked }));
                                                     }}
                                                 >
-                                                    <span style={{ fontSize: '13px', fontWeight: isChecked ? 600 : 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    <span style={{ fontSize: '13px', fontWeight: isChecked ? 600 : 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                         {s.fullName}
+                                                        {activeChartClasses.length > 1 && (
+                                                            <span style={{ fontSize: '10px', background: '#e2e8f0', color: '#475569', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                                                                {s.class}
+                                                            </span>
+                                                        )}
                                                     </span>
                                                     <span style={{ fontSize: '11px', color: '#94a3b8' }}>
                                                         SBD: {s.id}
